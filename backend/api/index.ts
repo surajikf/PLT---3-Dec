@@ -1,5 +1,5 @@
-// Vercel serverless function - Express app handler
+// Vercel serverless function - Express app entry point
+// Simply export the Express app - Vercel handles Express automatically
 import app from '../src/server';
 
-// Export the Express app directly - Vercel handles Express apps automatically
 export default app;
