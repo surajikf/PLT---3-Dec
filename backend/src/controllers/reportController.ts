@@ -124,6 +124,7 @@ export const getDepartmentReport = async (req: AuthRequest, res: Response, next:
             id: true,
             firstName: true,
             lastName: true,
+            hourlyRate: true,
             department: {
               select: {
                 id: true,

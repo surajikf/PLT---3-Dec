@@ -266,7 +266,7 @@ export const getProjectById = async (req: AuthRequest, res: Response, next: Next
 
 export const createProject = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { code, name, description, customerId, managerId, departmentId, budget, revenue, startDate, endDate, stageIds } = req.body;
+    const { code, name, description, customerId, managerId, departmentId, budget, startDate, endDate, stageIds } = req.body;
     const currentUser = req.user!;
 
     if (currentUser.role === 'CLIENT' || currentUser.role === 'TEAM_MEMBER') {
@@ -337,7 +337,6 @@ export const createProject = async (req: AuthRequest, res: Response, next: NextF
         managerId: managerId || null,
         departmentId: departmentId || null,
         budget: validatedBudget,
-        revenue: revenue ? parseFloat(revenue) : null,
         startDate: start,
         endDate: end,
         createdById: currentUser.userId,
@@ -405,7 +404,7 @@ export const updateProject = async (req: AuthRequest, res: Response, next: NextF
       }
     }
 
-    const allowedFields = ['name', 'description', 'status', 'budget', 'revenue', 'startDate', 'endDate', 'managerId', 'departmentId', 'healthScore'];
+    const allowedFields = ['name', 'description', 'status', 'budget', 'startDate', 'endDate', 'managerId', 'departmentId', 'healthScore'];
     allowedFields.forEach((field) => {
       if (req.body[field] !== undefined) {
         if (field === 'budget' || field === 'healthScore') {
