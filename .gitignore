@@ -47,3 +47,7 @@ yarn-error.log*
 # TypeScript
 *.tsbuildinfo
 
+# Vercel serverless functions - compiled JS files
+backend/api/*.js
+backend/api/**/*.js
+
