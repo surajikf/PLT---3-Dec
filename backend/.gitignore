@@ -1,0 +1,25 @@
+# Compiled files (but allow node_modules)
+*.js
+*.js.map
+!node_modules/**/*.js
+
+# Vercel serverless functions - prevent compiled JS files
+api/*.js
+api/**/*.js
+
+# Build output
+dist/
+
+# Environment
+.env
+.env.local
+
+# Prisma
+prisma/migrations/
+
+# Logs
+*.log
+
+# Vercel
+.vercel
+

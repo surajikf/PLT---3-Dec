@@ -1,0 +1,5 @@
+# Ignore compiled JavaScript files in api folder
+api/*.js
+api/**/*.js
+*.js.map
+
