@@ -1,7 +1,9 @@
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from 'react-query';
 import api from '../services/api';
-import { ArrowLeft, Users, Clock, DollarSign, TrendingUp, AlertCircle, Plus, CheckCircle, XCircle, Edit, Link as LinkIcon, FileText } from 'lucide-react';
+import { ArrowLeft, Users, Clock, TrendingUp, AlertCircle, Plus, CheckCircle, XCircle, Edit, Link as LinkIcon, FileText } from 'lucide-react';
+import { RupeeIcon } from '../components/RupeeIcon';
+import { formatCurrency, formatCurrencyTooltip } from '../utils/currency';
 import { useState } from 'react';
 import { authService } from '../services/authService';
 import { UserRole } from '../utils/roles';
@@ -128,7 +130,7 @@ const ProjectDetailPage = () => {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
           <div className="p-4 bg-blue-50 rounded-lg">
             <p className="text-sm text-gray-600 mb-1">Budget</p>
-            <p className="text-2xl font-bold text-gray-900">${(project.budget || 0).toLocaleString()}</p>
+            <p className="text-2xl font-bold text-gray-900">{formatCurrency(project.budget || 0)}</p>
           </div>
           <div className="p-4 bg-green-50 rounded-lg">
             <p className="text-sm text-gray-600 mb-1">Progress</p>
@@ -137,7 +139,7 @@ const ProjectDetailPage = () => {
           <div className={`p-4 rounded-lg ${isOverBudget ? 'bg-red-50' : isAtRisk ? 'bg-yellow-50' : 'bg-gray-50'}`}>
             <p className="text-sm text-gray-600 mb-1">Spent</p>
             <p className={`text-2xl font-bold ${isOverBudget ? 'text-red-600' : 'text-gray-900'}`}>
-              ${(project.totalCost || 0).toLocaleString()}
+              {formatCurrency(project.totalCost || 0)}
             </p>
             {isOverBudget && (
               <p className="text-xs text-red-600 mt-1 flex items-center">
@@ -186,58 +188,146 @@ const ProjectDetailPage = () => {
       {/* Tab Content */}
       <div className="mt-6">
         {activeTab === 'overview' && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Budget Visualization */}
-            <div className="card">
-              <h2 className="text-xl font-bold mb-4">Budget vs. Actual</h2>
-              <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={budgetData}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="name" />
-                  <YAxis />
-                  <Tooltip formatter={(value: number) => `$${value.toLocaleString()}`} />
-                  <Bar dataKey="value" />
-                </BarChart>
-              </ResponsiveContainer>
-              <div className="mt-4 space-y-2">
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Budget:</span>
-                  <span className="font-semibold">${(project.budget || 0).toLocaleString()}</span>
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Budget Visualization */}
+              <div className="card">
+                <h2 className="text-xl font-bold mb-4">Budget vs. Actual</h2>
+                <ResponsiveContainer width="100%" height={300}>
+                  <BarChart data={budgetData}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="name" />
+                    <YAxis />
+                    <Tooltip formatter={(value: number) => formatCurrencyTooltip(value)} />
+                    <Bar dataKey="value" />
+                  </BarChart>
+                </ResponsiveContainer>
+                <div className="mt-4 space-y-2">
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Budget:</span>
+                    <span className="font-semibold">{formatCurrency(project.budget || 0)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Spent:</span>
+                    <span className={`font-semibold ${isOverBudget ? 'text-red-600' : ''}`}>
+                      {formatCurrency(project.totalCost || 0)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Remaining:</span>
+                    <span className={`font-semibold ${(project.budget || 0) - (project.totalCost || 0) < 0 ? 'text-red-600' : ''}`}>
+                      {formatCurrency((project.budget || 0) - (project.totalCost || 0))}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Utilization:</span>
+                    <span className={`font-semibold ${isAtRisk || isOverBudget ? 'text-red-600' : ''}`}>
+                      {budgetUtilization.toFixed(1)}%
+                    </span>
+                  </div>
+                  {/* Profit/Loss for Admins */}
+                  {(user?.role === UserRole.SUPER_ADMIN || user?.role === UserRole.ADMIN) && project.financials && (
+                    <>
+                      <div className="border-t border-gray-200 pt-2 mt-2">
+                        <div className="flex justify-between">
+                          <span className="text-gray-600 font-medium">Profit/Loss:</span>
+                          <span className={`font-bold text-lg ${project.financials.isProfit ? 'text-green-600' : project.financials.isLoss ? 'text-red-600' : 'text-gray-900'}`}>
+                            {formatCurrency(project.financials.profitLoss || 0)}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-600 text-sm">Margin:</span>
+                          <span className={`text-sm font-semibold ${project.financials.profitLossPercentage >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                            {project.financials.profitLossPercentage.toFixed(1)}%
+                          </span>
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Spent:</span>
-                  <span className={`font-semibold ${isOverBudget ? 'text-red-600' : ''}`}>
-                    ${(project.totalCost || 0).toLocaleString()}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Remaining:</span>
-                  <span className={`font-semibold ${(project.budget || 0) - (project.totalCost || 0) < 0 ? 'text-red-600' : ''}`}>
-                    ${((project.budget || 0) - (project.totalCost || 0)).toLocaleString()}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Utilization:</span>
-                  <span className={`font-semibold ${isAtRisk || isOverBudget ? 'text-red-600' : ''}`}>
-                    {budgetUtilization.toFixed(1)}%
-                  </span>
-                </div>
+              </div>
+
+              {/* Progress Chart */}
+              <div className="card">
+                <h2 className="text-xl font-bold mb-4">Stage Progress</h2>
+                <ResponsiveContainer width="100%" height={300}>
+                  <LineChart data={progressData}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="name" />
+                    <YAxis domain={[0, 100]} />
+                    <Tooltip />
+                    <Line type="monotone" dataKey="progress" stroke="#3b82f6" strokeWidth={2} />
+                  </LineChart>
+                </ResponsiveContainer>
               </div>
             </div>
 
-            {/* Progress Chart */}
-            <div className="card">
-              <h2 className="text-xl font-bold mb-4">Stage Progress</h2>
-              <ResponsiveContainer width="100%" height={300}>
-                <LineChart data={progressData}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="name" />
-                  <YAxis domain={[0, 100]} />
-                  <Tooltip />
-                  <Line type="monotone" dataKey="progress" stroke="#3b82f6" strokeWidth={2} />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
+            {/* Employee Cost Breakdown - Admin Only */}
+            {(user?.role === UserRole.SUPER_ADMIN || user?.role === UserRole.ADMIN) && project.employeeCosts && project.employeeCosts.length > 0 && (
+              <div className="card">
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-xl font-bold">Employee Cost Breakdown</h2>
+                  <Link to="/profit-loss" className="text-sm text-primary-600 hover:text-primary-700">
+                    View Full P&L →
+                  </Link>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Employee</th>
+                        <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Hourly Rate</th>
+                        <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Hours Logged</th>
+                        <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Total Cost</th>
+                        <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">% of Total</th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      {project.employeeCosts.map((emp: any) => {
+                        const percentageOfTotal = project.totalCost > 0 
+                          ? (emp.totalCost / project.totalCost) * 100 
+                          : 0;
+                        return (
+                          <tr key={emp.user.id} className="hover:bg-gray-50">
+                            <td className="px-6 py-4 whitespace-nowrap">
+                              <div>
+                                <p className="font-medium text-gray-900">
+                                  {emp.user.firstName} {emp.user.lastName}
+                                </p>
+                                <p className="text-sm text-gray-500">{emp.user.email}</p>
+                              </div>
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-900">
+                              {formatCurrency(emp.user.hourlyRate || 0, { maximumFractionDigits: 2 })}/hr
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-900">
+                              {emp.totalHours.toFixed(1)}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-bold text-gray-900">
+                              {formatCurrency(emp.totalCost)}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-500">
+                              {percentageOfTotal.toFixed(1)}%
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                    <tfoot className="bg-gray-50">
+                      <tr>
+                        <td colSpan={3} className="px-6 py-3 text-right text-sm font-bold text-gray-900">
+                          Total:
+                        </td>
+                        <td className="px-6 py-3 text-right text-sm font-bold text-gray-900">
+                          {formatCurrency(project.totalCost || 0)}
+                        </td>
+                        <td className="px-6 py-3 text-right text-sm font-bold text-gray-900">100%</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -331,7 +421,7 @@ const ProjectDetailPage = () => {
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{member.user.email}</td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{member.user.role}</td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          ${member.user.hourlyRate || 'N/A'}
+                          {member.user.hourlyRate ? formatCurrency(member.user.hourlyRate, { maximumFractionDigits: 2 }) : 'N/A'}
                         </td>
                         {canEdit && (
                           <td className="px-6 py-4 whitespace-nowrap text-sm">

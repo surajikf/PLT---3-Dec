@@ -2,6 +2,7 @@ import { Response, NextFunction } from 'express';
 import prisma from '../utils/prisma';
 import { NotFoundError, ForbiddenError, ValidationError } from '../utils/errors';
 import { AuthRequest } from '../middleware/auth';
+import { validateHours, validateTimesheetDate } from '../utils/validation';
 
 export const getTimesheets = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
@@ -82,25 +83,18 @@ export const getTimesheets = async (req: AuthRequest, res: Response, next: NextF
 
 export const createTimesheet = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { projectId, date, hours, description } = req.body;
+    const { projectId, date, hours, description, status } = req.body;
     const currentUser = req.user!;
 
     if (currentUser.role === 'CLIENT') {
       throw new ForbiddenError('Clients cannot create timesheets');
     }
 
-    // Validate hours
-    if (hours < 0.5 || hours > 24) {
-      throw new ValidationError('Hours must be between 0.5 and 24');
-    }
+    // Validate hours using utility function
+    const validatedHours = validateHours(hours);
 
-    // Validate date (no future dates)
-    const entryDate = new Date(date);
-    const today = new Date();
-    today.setHours(23, 59, 59, 999);
-    if (entryDate > today) {
-      throw new ValidationError('Cannot log time for future dates');
-    }
+    // Validate date using utility function
+    const entryDate = validateTimesheetDate(date);
 
     // Verify project exists and user has access
     const project = await prisma.project.findUnique({
@@ -121,14 +115,18 @@ export const createTimesheet = async (req: AuthRequest, res: Response, next: Nex
       }
     }
 
+    // Default to SUBMITTED if status not provided (form submission)
+    // Allow DRAFT for draft saves
+    const timesheetStatus = status || 'SUBMITTED';
+    
     const timesheet = await prisma.timesheet.create({
       data: {
         userId: currentUser.userId,
         projectId,
         date: entryDate,
-        hours: parseFloat(hours),
+        hours: validatedHours,
         description: description || null,
-        status: 'DRAFT',
+        status: timesheetStatus,
       },
       include: {
         user: {

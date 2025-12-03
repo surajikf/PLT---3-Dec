@@ -5,6 +5,7 @@ import { Plus, Search } from 'lucide-react';
 import { useState } from 'react';
 import { authService } from '../services/authService';
 import { UserRole } from '../utils/roles';
+import { formatCurrency } from '../utils/currency';
 
 const ProjectsPage = () => {
   const user = authService.getCurrentUser();
@@ -117,7 +118,7 @@ const ProjectsPage = () => {
                       </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      ${project.budget?.toLocaleString() || '0'}
+                      {formatCurrency(project.budget || 0)}
                     </td>
                   </tr>
                 ))}

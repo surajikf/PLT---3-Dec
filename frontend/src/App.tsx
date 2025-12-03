@@ -15,6 +15,9 @@ import ResourcesPage from './pages/ResourcesPage';
 import ReportsPage from './pages/ReportsPage';
 import UsersPage from './pages/UsersPage';
 import DepartmentsPage from './pages/DepartmentsPage';
+import ProfitLossPage from './pages/ProfitLossPage';
+import ProjectCreatePage from './pages/ProjectCreatePage';
+import MasterManagementPage from './pages/MasterManagementPage';
 import Layout from './components/Layout';
 
 function App() {
@@ -42,6 +45,7 @@ function App() {
           <Route index element={<Navigate to="/dashboard" replace />} />
           <Route path="dashboard" element={<DashboardPage />} />
           <Route path="projects" element={<ProjectsPage />} />
+          <Route path="projects/new" element={<ProjectCreatePage />} />
           <Route path="projects/:id" element={<ProjectDetailPage />} />
           <Route path="timesheets" element={<TimesheetsPage />} />
           <Route path="resources" element={<ResourcesPage />} />
@@ -74,6 +78,22 @@ function App() {
             element={
               <ProtectedRoute allowedRoles={[UserRole.SUPER_ADMIN, UserRole.ADMIN]}>
                 <DepartmentsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="profit-loss"
+            element={
+              <ProtectedRoute allowedRoles={[UserRole.SUPER_ADMIN, UserRole.ADMIN]}>
+                <ProfitLossPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="master-management"
+            element={
+              <ProtectedRoute allowedRoles={[UserRole.SUPER_ADMIN, UserRole.ADMIN]}>
+                <MasterManagementPage />
               </ProtectedRoute>
             }
           />

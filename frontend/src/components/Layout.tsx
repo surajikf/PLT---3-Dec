@@ -1,7 +1,7 @@
 import { Outlet, Link, useNavigate, useLocation } from 'react-router-dom';
 import { authService } from '../services/authService';
 import { UserRole, roleLabels } from '../utils/roles';
-import { LayoutDashboard, FolderKanban, Clock, FileText, Users, Building2, BarChart3, Settings, LogOut, Link as LinkIcon, User, Menu, X } from 'lucide-react';
+import { LayoutDashboard, FolderKanban, Clock, FileText, Users, Building2, BarChart3, Settings, LogOut, Link as LinkIcon, User, Menu, X, TrendingUp, Database } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useState } from 'react';
 
@@ -27,6 +27,8 @@ const Layout = () => {
     { path: '/reports', label: 'Reports', icon: BarChart3, roles: [UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER] },
     { path: '/users', label: 'Users', icon: Users, roles: [UserRole.SUPER_ADMIN, UserRole.ADMIN] },
     { path: '/departments', label: 'Departments', icon: Settings, roles: [UserRole.SUPER_ADMIN, UserRole.ADMIN] },
+    { path: '/profit-loss', label: 'Profit & Loss', icon: TrendingUp, roles: [UserRole.SUPER_ADMIN, UserRole.ADMIN] },
+    { path: '/master-management', label: 'Master Management', icon: Database, roles: [UserRole.SUPER_ADMIN, UserRole.ADMIN] },
   ];
 
   const filteredMenuItems = menuItems.filter((item) =>

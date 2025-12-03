@@ -11,6 +11,9 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:seed": "tsx prisma/seed.ts",
     "prisma:studio": "prisma studio",
+    "assign-rates": "tsx scripts/assign-hourly-rates.ts",
+    "add-tasks": "tsx scripts/add-development-tasks.ts",
+    "check-db": "tsx scripts/check-database-tables.ts",
     "test": "jest",
     "lint": "eslint src --ext .ts"
   },

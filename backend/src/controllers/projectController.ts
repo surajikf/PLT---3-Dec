@@ -1,7 +1,8 @@
 import { Response, NextFunction } from 'express';
 import prisma from '../utils/prisma';
-import { NotFoundError, ForbiddenError } from '../utils/errors';
+import { NotFoundError, ForbiddenError, ValidationError } from '../utils/errors';
 import { AuthRequest } from '../middleware/auth';
+import { validateProjectCode, validateBudget, validateDateRange } from '../utils/validation';
 
 export const getProjects = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
@@ -178,17 +179,46 @@ export const getProjectById = async (req: AuthRequest, res: Response, next: Next
         projectId: id,
         status: 'APPROVED',
       },
+      include: {
+        user: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            hourlyRate: true,
+          },
+        },
+      },
     });
 
     let totalCost = 0;
+    const employeeCosts: Record<string, {
+      user: {
+        id: string;
+        firstName: string;
+        lastName: string;
+        email: string;
+        hourlyRate: number | null;
+      };
+      totalHours: number;
+      totalCost: number;
+    }> = {};
+
     for (const timesheet of timesheets) {
-      const user = await prisma.user.findUnique({
-        where: { id: timesheet.userId },
-        select: { hourlyRate: true },
-      });
-      if (user?.hourlyRate) {
-        totalCost += timesheet.hours * user.hourlyRate;
+      const hourlyRate = timesheet.user.hourlyRate || 0;
+      const cost = timesheet.hours * hourlyRate;
+      totalCost += cost;
+
+      if (!employeeCosts[timesheet.userId]) {
+        employeeCosts[timesheet.userId] = {
+          user: timesheet.user,
+          totalHours: 0,
+          totalCost: 0,
+        };
       }
+      employeeCosts[timesheet.userId].totalHours += timesheet.hours;
+      employeeCosts[timesheet.userId].totalCost += cost;
     }
 
     const progress = project.stages
@@ -197,14 +227,37 @@ export const getProjectById = async (req: AuthRequest, res: Response, next: Next
 
     const healthScore = calculateHealthScore(project.budget, totalCost, progress);
 
+    // Calculate profit/loss for admin users
+    const fixedProjectCost = project.budget || 0;
+    const profitLoss = fixedProjectCost - totalCost;
+    const profitLossPercentage = fixedProjectCost > 0 
+      ? (profitLoss / fixedProjectCost) * 100 
+      : 0;
+
+    const responseData: any = {
+      ...project,
+      calculatedProgress: progress,
+      totalCost,
+      healthScore: healthScore || project.healthScore,
+    };
+
+    // Add detailed cost breakdown for admin users only
+    if (currentUser.role === 'SUPER_ADMIN' || currentUser.role === 'ADMIN') {
+      responseData.employeeCosts = Object.values(employeeCosts);
+      responseData.financials = {
+        fixedProjectCost,
+        totalActualCost: totalCost,
+        profitLoss,
+        profitLossPercentage,
+        isProfit: profitLoss > 0,
+        isLoss: profitLoss < 0,
+        isBreakEven: profitLoss === 0,
+      };
+    }
+
     res.json({
       success: true,
-      data: {
-        ...project,
-        calculatedProgress: progress,
-        totalCost,
-        healthScore: healthScore || project.healthScore,
-      },
+      data: responseData,
     });
   } catch (error) {
     next(error);
@@ -213,26 +266,82 @@ export const getProjectById = async (req: AuthRequest, res: Response, next: Next
 
 export const createProject = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { code, name, description, customerId, managerId, departmentId, budget, startDate, endDate, stageIds } = req.body;
+    const { code, name, description, customerId, managerId, departmentId, budget, revenue, startDate, endDate, stageIds } = req.body;
     const currentUser = req.user!;
 
     if (currentUser.role === 'CLIENT' || currentUser.role === 'TEAM_MEMBER') {
       throw new ForbiddenError('Insufficient permissions to create projects');
     }
 
+    // Validate required fields
+    if (!code || !code.trim()) {
+      throw new ValidationError('Project code is required');
+    }
+    if (!name || !name.trim()) {
+      throw new ValidationError('Project name is required');
+    }
+
+    // Validate project code format
+    validateProjectCode(code.trim());
+
+    // Check if code already exists
+    const existingProject = await prisma.project.findUnique({
+      where: { code: code.trim().toUpperCase() },
+    });
+    if (existingProject) {
+      throw new ValidationError('Project code already exists. Please use a different code.');
+    }
+
+    // Validate budget
+    const validatedBudget = validateBudget(budget);
+
+    // Validate dates
+    const start = startDate ? new Date(startDate) : null;
+    const end = endDate ? new Date(endDate) : null;
+    validateDateRange(start, end);
+
+    // Validate customer exists if provided
+    if (customerId) {
+      const customer = await prisma.customer.findUnique({ where: { id: customerId } });
+      if (!customer) {
+        throw new ValidationError('Selected customer does not exist');
+      }
+    }
+
+    // Validate manager exists if provided
+    if (managerId) {
+      const manager = await prisma.user.findUnique({ where: { id: managerId } });
+      if (!manager) {
+        throw new ValidationError('Selected manager does not exist');
+      }
+      if (!['SUPER_ADMIN', 'ADMIN', 'PROJECT_MANAGER'].includes(manager.role)) {
+        throw new ValidationError('Selected user is not eligible to be a project manager');
+      }
+    }
+
+    // Validate department exists if provided
+    if (departmentId) {
+      const department = await prisma.department.findUnique({ where: { id: departmentId } });
+      if (!department) {
+        throw new ValidationError('Selected department does not exist');
+      }
+    }
+
     // Create project
     const project = await prisma.project.create({
       data: {
-        code,
-        name,
-        description,
+        code: code.trim().toUpperCase(),
+        name: name.trim(),
+        description: description?.trim() || null,
         customerId: customerId || null,
         managerId: managerId || null,
         departmentId: departmentId || null,
-        budget: budget ? parseFloat(budget) : 0,
-        startDate: startDate ? new Date(startDate) : null,
-        endDate: endDate ? new Date(endDate) : null,
+        budget: validatedBudget,
+        revenue: revenue ? parseFloat(revenue) : null,
+        startDate: start,
+        endDate: end,
         createdById: currentUser.userId,
+        status: 'PLANNING', // Always start in PLANNING status
       },
     });
 
@@ -296,7 +405,7 @@ export const updateProject = async (req: AuthRequest, res: Response, next: NextF
       }
     }
 
-    const allowedFields = ['name', 'description', 'status', 'budget', 'startDate', 'endDate', 'managerId', 'departmentId', 'healthScore'];
+    const allowedFields = ['name', 'description', 'status', 'budget', 'revenue', 'startDate', 'endDate', 'managerId', 'departmentId', 'healthScore'];
     allowedFields.forEach((field) => {
       if (req.body[field] !== undefined) {
         if (field === 'budget' || field === 'healthScore') {

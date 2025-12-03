@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery } from 'react-query';
 import api from '../services/api';
 import { BarChart3 } from 'lucide-react';
+import { formatCurrency } from '../utils/currency';
 
 const ReportsPage = () => {
   const [reportType, setReportType] = useState<'budget' | 'department'>('budget');
@@ -50,11 +51,11 @@ const ReportsPage = () => {
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
               <div>
                 <p className="text-sm text-gray-500">Total Budget</p>
-                <p className="text-2xl font-bold">${budgetReport.summary.totalBudget.toLocaleString()}</p>
+                <p className="text-2xl font-bold">{formatCurrency(budgetReport.summary.totalBudget)}</p>
               </div>
               <div>
                 <p className="text-sm text-gray-500">Total Spent</p>
-                <p className="text-2xl font-bold">${budgetReport.summary.totalSpent.toLocaleString()}</p>
+                <p className="text-2xl font-bold">{formatCurrency(budgetReport.summary.totalSpent)}</p>
               </div>
               <div>
                 <p className="text-sm text-gray-500">Over Budget</p>
