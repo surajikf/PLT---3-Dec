@@ -145,7 +145,7 @@ export const createTask = async (req: AuthRequest, res: Response, next: NextFunc
       }
 
       if (currentUser.role === 'TEAM_MEMBER') {
-        const isMember = project.members.some((m) => m.userId === currentUser.userId);
+        const isMember = project.members.some((m: any) => m.userId === currentUser.userId);
         if (!isMember) {
           throw new ForbiddenError('You can only create tasks for assigned projects');
         }

@@ -61,7 +61,7 @@ export const getTimesheets = async (req: AuthRequest, res: Response, next: NextF
     ]);
 
     // Calculate costs
-    const timesheetsWithCost = timesheets.map((ts) => ({
+    const timesheetsWithCost = timesheets.map((ts: any) => ({
       ...ts,
       cost: ts.user.hourlyRate ? ts.hours * ts.user.hourlyRate : 0,
     }));
@@ -109,7 +109,7 @@ export const createTimesheet = async (req: AuthRequest, res: Response, next: Nex
     }
 
     if (currentUser.role === 'TEAM_MEMBER') {
-      const isMember = project.members.some((m) => m.userId === currentUser.userId);
+      const isMember = project.members.some((m: any) => m.userId === currentUser.userId);
       if (!isMember) {
         throw new ForbiddenError('You are not assigned to this project');
       }

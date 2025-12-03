@@ -1,0 +1,5 @@
+# Vercel ignore file - exclude from deployment
+backend/prisma/seed.ts
+backend/scripts/**
+backend/prisma/migrations/**
+

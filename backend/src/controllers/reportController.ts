@@ -222,7 +222,7 @@ export const getBudgetReport = async (req: AuthRequest, res: Response, next: Nex
       },
     });
 
-    const projectReports = projects.map((project) => {
+    const projectReports = projects.map((project: any) => {
       let totalCost = 0;
       for (const ts of project.timesheets) {
         if (ts.user.hourlyRate) {
@@ -245,11 +245,11 @@ export const getBudgetReport = async (req: AuthRequest, res: Response, next: Nex
     });
 
     const summary = {
-      totalBudget: projectReports.reduce((sum, p) => sum + p.budget, 0),
-      totalSpent: projectReports.reduce((sum, p) => sum + p.spent, 0),
-      totalRemaining: projectReports.reduce((sum, p) => sum + p.remaining, 0),
-      overBudgetCount: projectReports.filter((p) => p.status === 'OVER_BUDGET').length,
-      atRiskCount: projectReports.filter((p) => p.status === 'AT_RISK').length,
+      totalBudget: projectReports.reduce((sum: number, p: any) => sum + p.budget, 0),
+      totalSpent: projectReports.reduce((sum: number, p: any) => sum + p.spent, 0),
+      totalRemaining: projectReports.reduce((sum: number, p: any) => sum + p.remaining, 0),
+      overBudgetCount: projectReports.filter((p: any) => p.status === 'OVER_BUDGET').length,
+      atRiskCount: projectReports.filter((p: any) => p.status === 'AT_RISK').length,
     };
 
     res.json({

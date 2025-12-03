@@ -222,8 +222,8 @@ export const getProjectById = async (req: AuthRequest, res: Response, next: Next
     }
 
     const progress = project.stages
-      .filter((ps) => ps.status === 'CLOSED')
-      .reduce((sum, ps) => sum + ps.weight, 0);
+      .filter((ps: any) => ps.status === 'CLOSED')
+      .reduce((sum: number, ps: any) => sum + ps.weight, 0);
 
     const healthScore = calculateHealthScore(project.budget, totalCost, progress);
 
