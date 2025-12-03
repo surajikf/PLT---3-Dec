@@ -1,9 +1,10 @@
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from 'react-query';
 import api from '../services/api';
-import { ArrowLeft, Users, Clock, TrendingUp, AlertCircle, Plus, CheckCircle, XCircle, Edit, Link as LinkIcon, FileText } from 'lucide-react';
+import { ArrowLeft, Users, Clock, TrendingUp, AlertCircle, Plus, CheckCircle, XCircle, Edit, Link as LinkIcon, FileText, Trash2, Save, X } from 'lucide-react';
 import { RupeeIcon } from '../components/RupeeIcon';
 import { formatCurrency, formatCurrencyTooltip } from '../utils/currency';
+import { format } from 'date-fns';
 import { useState } from 'react';
 import { authService } from '../services/authService';
 import { UserRole } from '../utils/roles';
@@ -16,6 +17,11 @@ const ProjectDetailPage = () => {
   const queryClient = useQueryClient();
   const user = authService.getCurrentUser();
   const [activeTab, setActiveTab] = useState<'overview' | 'stages' | 'team' | 'tasks' | 'resources' | 'timesheets'>('overview');
+  const [taskModalOpen, setTaskModalOpen] = useState(false);
+  const [editingTask, setEditingTask] = useState<any>(null);
+  const [resourceModalOpen, setResourceModalOpen] = useState(false);
+  const [editingResource, setEditingResource] = useState<any>(null);
+  const [teamMemberModalOpen, setTeamMemberModalOpen] = useState(false);
 
   const { data: project, isLoading } = useQuery(
     ['project', id],
@@ -37,13 +43,16 @@ const ProjectDetailPage = () => {
 
   const updateStageMutation = useMutation(
     async ({ projectStageId, status }: { projectStageId: string; status: string }) => {
-      // API call would go here - for now just update local state
-      return { projectStageId, status };
+      const res = await api.patch(`/projects/${id}/stages/${projectStageId}`, { status });
+      return res.data.data;
     },
     {
       onSuccess: () => {
         queryClient.invalidateQueries(['project', id]);
         toast.success('Stage updated successfully');
+      },
+      onError: (error: any) => {
+        toast.error(error.response?.data?.error || 'Failed to update stage');
       },
     }
   );
@@ -394,7 +403,10 @@ const ProjectDetailPage = () => {
             <div className="flex justify-between items-center mb-4">
               <h2 className="text-xl font-bold">Team Members</h2>
               {canEdit && (
-                <button className="btn btn-primary inline-flex items-center text-sm">
+                <button
+                  onClick={() => setTeamMemberModalOpen(true)}
+                  className="btn btn-primary inline-flex items-center text-sm"
+                >
                   <Plus className="w-4 h-4 mr-2" />
                   Add Member
                 </button>
@@ -425,7 +437,18 @@ const ProjectDetailPage = () => {
                         </td>
                         {canEdit && (
                           <td className="px-6 py-4 whitespace-nowrap text-sm">
-                            <button className="text-red-600 hover:text-red-700">Remove</button>
+                            <button
+                              onClick={() => {
+                                if (window.confirm(`Are you sure you want to remove ${member.user.firstName} ${member.user.lastName} from this project?`)) {
+                                  // API call to remove member would go here
+                                  // For now, we'll need to create an endpoint or use project update
+                                  toast.error('Remove member functionality requires backend endpoint');
+                                }
+                              }}
+                              className="text-red-600 hover:text-red-700"
+                            >
+                              Remove
+                            </button>
                           </td>
                         )}
                       </tr>
@@ -444,7 +467,13 @@ const ProjectDetailPage = () => {
             <div className="flex justify-between items-center mb-4">
               <h2 className="text-xl font-bold">Tasks</h2>
               {canEdit && (
-                <button className="btn btn-primary inline-flex items-center text-sm">
+                <button 
+                  onClick={() => {
+                    setEditingTask(null);
+                    setTaskModalOpen(true);
+                  }}
+                  className="btn btn-primary inline-flex items-center text-sm"
+                >
                   <Plus className="w-4 h-4 mr-2" />
                   New Task
                 </button>
@@ -463,6 +492,7 @@ const ProjectDetailPage = () => {
                             <span>Assigned to: {task.assignedTo.firstName} {task.assignedTo.lastName}</span>
                           )}
                           {task.dueDate && <span>Due: {new Date(task.dueDate).toLocaleDateString()}</span>}
+                          {task.stage && <span>Stage: {task.stage.name}</span>}
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
@@ -492,6 +522,37 @@ const ProjectDetailPage = () => {
                         >
                           {task.status.replace('_', ' ')}
                         </span>
+                        {canEdit && (
+                          <div className="flex gap-1 ml-2">
+                            <button
+                              onClick={() => {
+                                setEditingTask(task);
+                                setTaskModalOpen(true);
+                              }}
+                              className="text-indigo-600 hover:text-indigo-900"
+                              title="Edit task"
+                            >
+                              <Edit className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => {
+                                if (window.confirm('Are you sure you want to delete this task?')) {
+                                  api.delete(`/tasks/${task.id}`).then(() => {
+                                    toast.success('Task deleted successfully');
+                                    queryClient.invalidateQueries(['tasks', id]);
+                                    queryClient.invalidateQueries(['project', id]);
+                                  }).catch((error: any) => {
+                                    toast.error(error.response?.data?.error || 'Failed to delete task');
+                                  });
+                                }
+                              }}
+                              className="text-red-600 hover:text-red-900"
+                              title="Delete task"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -508,7 +569,13 @@ const ProjectDetailPage = () => {
             <div className="flex justify-between items-center mb-4">
               <h2 className="text-xl font-bold">Resources</h2>
               {canEdit && (
-                <button className="btn btn-primary inline-flex items-center text-sm">
+                <button
+                  onClick={() => {
+                    setEditingResource(null);
+                    setResourceModalOpen(true);
+                  }}
+                  className="btn btn-primary inline-flex items-center text-sm"
+                >
                   <Plus className="w-4 h-4 mr-2" />
                   Add Resource
                 </button>
@@ -517,9 +584,40 @@ const ProjectDetailPage = () => {
             {project.resources && project.resources.length > 0 ? (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {project.resources.map((resource: any) => (
-                  <div key={resource.id} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
-                    <h3 className="font-semibold text-gray-900 mb-1">{resource.name}</h3>
+                  <div key={resource.id} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow relative">
+                    <div className="flex justify-between items-start mb-2">
+                      <h3 className="font-semibold text-gray-900">{resource.name}</h3>
+                      {canEdit && (
+                        <div className="flex gap-1">
+                          <button
+                            onClick={() => {
+                              setEditingResource(resource);
+                              setResourceModalOpen(true);
+                            }}
+                            className="text-indigo-600 hover:text-indigo-900"
+                          >
+                            <Edit className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => {
+                              if (window.confirm('Are you sure you want to delete this resource?')) {
+                                api.delete(`/resources/${resource.id}`).then(() => {
+                                  toast.success('Resource deleted successfully');
+                                  queryClient.invalidateQueries(['project', id]);
+                                }).catch((error: any) => {
+                                  toast.error(error.response?.data?.error || 'Failed to delete resource');
+                                });
+                              }
+                            }}
+                            className="text-red-600 hover:text-red-900"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
                     <p className="text-sm text-gray-500 mb-2">{resource.type}</p>
+                    {resource.description && <p className="text-sm text-gray-600 mb-2">{resource.description}</p>}
                     {resource.url && (
                       <a
                         href={resource.url}
@@ -541,11 +639,580 @@ const ProjectDetailPage = () => {
         )}
 
         {activeTab === 'timesheets' && (
-          <div className="card">
-            <h2 className="text-xl font-bold mb-4">Timesheet History</h2>
-            <p className="text-gray-500">Timesheet entries for this project will appear here</p>
-          </div>
+          <ProjectTimesheetsTab projectId={id!} />
         )}
+      </div>
+
+      {/* Modals */}
+      {taskModalOpen && (
+        <TaskModal
+          projectId={id!}
+          task={editingTask}
+          onClose={() => {
+            setTaskModalOpen(false);
+            setEditingTask(null);
+          }}
+        />
+      )}
+
+      {resourceModalOpen && (
+        <ResourceModal
+          projectId={id!}
+          resource={editingResource}
+          onClose={() => {
+            setResourceModalOpen(false);
+            setEditingResource(null);
+          }}
+        />
+      )}
+
+      {teamMemberModalOpen && (
+        <TeamMemberModal
+          projectId={id!}
+          existingMembers={project?.members?.map((m: any) => m.userId) || []}
+          onClose={() => setTeamMemberModalOpen(false)}
+        />
+      )}
+    </div>
+  );
+};
+
+// Project Timesheets Tab Component
+const ProjectTimesheetsTab = ({ projectId }: { projectId: string }) => {
+  const { data: timesheets, isLoading } = useQuery(
+    ['project-timesheets', projectId],
+    async () => {
+      const res = await api.get(`/timesheets?projectId=${projectId}`);
+      return res.data.data || [];
+    }
+  );
+
+  const user = authService.getCurrentUser();
+  const canViewCost = user && [UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER].includes(user.role as UserRole);
+
+  if (isLoading) {
+    return (
+      <div className="card">
+        <p className="text-gray-500">Loading timesheets...</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="card">
+      <div className="flex justify-between items-center mb-4">
+        <h2 className="text-xl font-bold">Timesheet History</h2>
+        <span className="text-sm text-gray-500">
+          {timesheets?.length || 0} {timesheets?.length === 1 ? 'entry' : 'entries'}
+        </span>
+      </div>
+      {timesheets && timesheets.length > 0 ? (
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Employee</th>
+                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Hours</th>
+                {canViewCost && (
+                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Cost</th>
+                )}
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Description</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+              </tr>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {timesheets.map((timesheet: any) => (
+                <tr key={timesheet.id} className="hover:bg-gray-50">
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                    {format(new Date(timesheet.date), 'MMM dd, yyyy')}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                    {timesheet.user.firstName} {timesheet.user.lastName}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 text-right">
+                    {timesheet.hours.toFixed(2)}
+                  </td>
+                  {canViewCost && (
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 text-right">
+                      {timesheet.user.hourlyRate
+                        ? formatCurrency(timesheet.hours * timesheet.user.hourlyRate)
+                        : 'N/A'}
+                    </td>
+                  )}
+                  <td className="px-6 py-4 text-sm text-gray-600 max-w-md truncate">
+                    {timesheet.description || '-'}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <span
+                      className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                        timesheet.status === 'APPROVED'
+                          ? 'bg-green-100 text-green-800'
+                          : timesheet.status === 'SUBMITTED'
+                          ? 'bg-yellow-100 text-yellow-800'
+                          : timesheet.status === 'REJECTED'
+                          ? 'bg-red-100 text-red-800'
+                          : 'bg-gray-100 text-gray-800'
+                      }`}
+                    >
+                      {timesheet.status}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p className="text-gray-500">No timesheet entries for this project yet.</p>
+      )}
+    </div>
+  );
+};
+
+// Task Modal Component
+const TaskModal = ({ projectId, task, onClose }: { projectId: string; task: any; onClose: () => void }) => {
+  const [formData, setFormData] = useState({
+    title: task?.title || '',
+    description: task?.description || '',
+    status: task?.status || 'TODO',
+    priority: task?.priority || 'MEDIUM',
+    assignedToId: task?.assignedToId || '',
+    dueDate: task?.dueDate ? new Date(task.dueDate).toISOString().split('T')[0] : '',
+    stageId: task?.stageId || '',
+  });
+  const queryClient = useQueryClient();
+
+  const { data: users } = useQuery('users-for-task', async () => {
+    const res = await api.get('/users?isActive=true');
+    return res.data.data || [];
+  });
+
+  const { data: stages } = useQuery(['project-stages', projectId], async () => {
+    const res = await api.get(`/projects/${projectId}`);
+    return res.data.data?.stages || [];
+  });
+
+  const createMutation = useMutation(
+    async (data: any) => {
+      const res = await api.post('/tasks', { ...data, projectId });
+      return res.data;
+    },
+    {
+      onSuccess: () => {
+        toast.success('Task created successfully');
+        queryClient.invalidateQueries(['tasks', projectId]);
+        queryClient.invalidateQueries(['project', projectId]);
+        onClose();
+      },
+      onError: (error: any) => {
+        toast.error(error.response?.data?.error || 'Failed to create task');
+      },
+    }
+  );
+
+  const updateMutation = useMutation(
+    async (data: any) => {
+      const res = await api.patch(`/tasks/${task.id}`, data);
+      return res.data;
+    },
+    {
+      onSuccess: () => {
+        toast.success('Task updated successfully');
+        queryClient.invalidateQueries(['tasks', projectId]);
+        queryClient.invalidateQueries(['project', projectId]);
+        onClose();
+      },
+      onError: (error: any) => {
+        toast.error(error.response?.data?.error || 'Failed to update task');
+      },
+    }
+  );
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const submitData = {
+      ...formData,
+      assignedToId: formData.assignedToId || null,
+      dueDate: formData.dueDate || null,
+      stageId: formData.stageId || null,
+    };
+    if (task) {
+      updateMutation.mutate(submitData);
+    } else {
+      createMutation.mutate(submitData);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between p-6 border-b border-gray-200">
+          <h2 className="text-xl font-semibold text-gray-900">{task ? 'Edit Task' : 'Create New Task'}</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+            <X className="w-6 h-6" />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Title <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              required
+              value={formData.title}
+              onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+              className="input"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+            <textarea
+              value={formData.description}
+              onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+              className="input"
+              rows={3}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
+              <select
+                value={formData.status}
+                onChange={(e) => setFormData({ ...formData, status: e.target.value })}
+                className="input"
+              >
+                <option value="TODO">Todo</option>
+                <option value="IN_PROGRESS">In Progress</option>
+                <option value="IN_REVIEW">In Review</option>
+                <option value="DONE">Done</option>
+                <option value="BLOCKED">Blocked</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Priority</label>
+              <select
+                value={formData.priority}
+                onChange={(e) => setFormData({ ...formData, priority: e.target.value })}
+                className="input"
+              >
+                <option value="LOW">Low</option>
+                <option value="MEDIUM">Medium</option>
+                <option value="HIGH">High</option>
+                <option value="URGENT">Urgent</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Assign To</label>
+              <select
+                value={formData.assignedToId}
+                onChange={(e) => setFormData({ ...formData, assignedToId: e.target.value })}
+                className="input"
+              >
+                <option value="">Unassigned</option>
+                {users?.filter((u: any) => u.role !== 'CLIENT').map((u: any) => (
+                  <option key={u.id} value={u.id}>
+                    {u.firstName} {u.lastName}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Due Date</label>
+              <input
+                type="date"
+                value={formData.dueDate}
+                onChange={(e) => setFormData({ ...formData, dueDate: e.target.value })}
+                className="input"
+              />
+            </div>
+            {stages && stages.length > 0 && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Stage</label>
+                <select
+                  value={formData.stageId}
+                  onChange={(e) => setFormData({ ...formData, stageId: e.target.value })}
+                  className="input"
+                >
+                  <option value="">No Stage</option>
+                  {stages.map((ps: any) => (
+                    <option key={ps.stage.id} value={ps.stage.id}>
+                      {ps.stage.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
+
+          <div className="flex justify-end gap-3 pt-4 border-t border-gray-200">
+            <button type="button" onClick={onClose} className="btn btn-secondary">
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="btn btn-primary inline-flex items-center"
+              disabled={createMutation.isLoading || updateMutation.isLoading}
+            >
+              <Save className="w-4 h-4 mr-2" />
+              {createMutation.isLoading || updateMutation.isLoading ? 'Saving...' : task ? 'Update' : 'Create'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+// Resource Modal Component
+const ResourceModal = ({ projectId, resource, onClose }: { projectId: string; resource: any; onClose: () => void }) => {
+  const [formData, setFormData] = useState({
+    name: resource?.name || '',
+    description: resource?.description || '',
+    type: resource?.type || 'Sitemap Documents',
+    url: resource?.url || '',
+    accessLevel: resource?.accessLevel || 'Team',
+  });
+  const queryClient = useQueryClient();
+
+  const resourceTypes = [
+    'Sitemap Documents',
+    'Content Folders',
+    'Design Assets',
+    'Development Handoff Files',
+    'QA Checklists',
+    'Templates',
+    'Libraries',
+  ];
+
+  const createMutation = useMutation(
+    async (data: any) => {
+      const res = await api.post('/resources', { ...data, projectId });
+      return res.data;
+    },
+    {
+      onSuccess: () => {
+        toast.success('Resource created successfully');
+        queryClient.invalidateQueries(['project', projectId]);
+        onClose();
+      },
+      onError: (error: any) => {
+        toast.error(error.response?.data?.error || 'Failed to create resource');
+      },
+    }
+  );
+
+  const updateMutation = useMutation(
+    async (data: any) => {
+      const res = await api.patch(`/resources/${resource.id}`, data);
+      return res.data;
+    },
+    {
+      onSuccess: () => {
+        toast.success('Resource updated successfully');
+        queryClient.invalidateQueries(['project', projectId]);
+        onClose();
+      },
+      onError: (error: any) => {
+        toast.error(error.response?.data?.error || 'Failed to update resource');
+      },
+    }
+  );
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (resource) {
+      updateMutation.mutate(formData);
+    } else {
+      createMutation.mutate(formData);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-lg shadow-xl max-w-xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between p-6 border-b border-gray-200">
+          <h2 className="text-xl font-semibold text-gray-900">{resource ? 'Edit Resource' : 'Add New Resource'}</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+            <X className="w-6 h-6" />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Name <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              required
+              value={formData.name}
+              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+              className="input"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
+            <select
+              value={formData.type}
+              onChange={(e) => setFormData({ ...formData, type: e.target.value })}
+              className="input"
+            >
+              {resourceTypes.map((type) => (
+                <option key={type} value={type}>
+                  {type}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">URL</label>
+            <input
+              type="url"
+              value={formData.url}
+              onChange={(e) => setFormData({ ...formData, url: e.target.value })}
+              className="input"
+              placeholder="https://..."
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+            <textarea
+              value={formData.description}
+              onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+              className="input"
+              rows={3}
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Access Level</label>
+            <select
+              value={formData.accessLevel}
+              onChange={(e) => setFormData({ ...formData, accessLevel: e.target.value })}
+              className="input"
+            >
+              <option value="Team">Team</option>
+              <option value="Public">Public</option>
+              <option value="Restricted">Restricted</option>
+            </select>
+          </div>
+
+          <div className="flex justify-end gap-3 pt-4 border-t border-gray-200">
+            <button type="button" onClick={onClose} className="btn btn-secondary">
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="btn btn-primary inline-flex items-center"
+              disabled={createMutation.isLoading || updateMutation.isLoading}
+            >
+              <Save className="w-4 h-4 mr-2" />
+              {createMutation.isLoading || updateMutation.isLoading ? 'Saving...' : resource ? 'Update' : 'Create'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+// Team Member Modal Component
+const TeamMemberModal = ({ projectId, existingMembers, onClose }: { projectId: string; existingMembers: string[]; onClose: () => void }) => {
+  const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
+  const queryClient = useQueryClient();
+
+  const { data: users } = useQuery('users-for-team', async () => {
+    const res = await api.get('/users?isActive=true');
+    return res.data.data || [];
+  });
+
+  const availableUsers = users?.filter((u: any) => u.role !== 'CLIENT' && !existingMembers.includes(u.id)) || [];
+
+  const addMembersMutation = useMutation(
+    async (userIds: string[]) => {
+      const res = await api.post(`/projects/${projectId}/members`, { userIds });
+      return res.data;
+    },
+    {
+      onSuccess: () => {
+        toast.success('Team members added successfully');
+        queryClient.invalidateQueries(['project', projectId]);
+        onClose();
+      },
+      onError: (error: any) => {
+        toast.error(error.response?.data?.error || 'Failed to add team members');
+      },
+    }
+  );
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (selectedUserIds.length === 0) {
+      toast.error('Please select at least one team member');
+      return;
+    }
+    addMembersMutation.mutate(selectedUserIds);
+  };
+
+  const toggleUser = (userId: string) => {
+    setSelectedUserIds((prev) =>
+      prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId]
+    );
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-lg shadow-xl max-w-xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between p-6 border-b border-gray-200">
+          <h2 className="text-xl font-semibold text-gray-900">Add Team Members</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+            <X className="w-6 h-6" />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="p-6">
+          <div className="space-y-2 max-h-96 overflow-y-auto mb-4">
+            {availableUsers.length > 0 ? (
+              availableUsers.map((user: any) => (
+                <label
+                  key={user.id}
+                  className="flex items-center p-3 border border-gray-200 rounded-lg hover:bg-gray-50 cursor-pointer"
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedUserIds.includes(user.id)}
+                    onChange={() => toggleUser(user.id)}
+                    className="mr-3"
+                  />
+                  <div>
+                    <p className="font-medium text-gray-900">
+                      {user.firstName} {user.lastName}
+                    </p>
+                    <p className="text-sm text-gray-500">{user.email}</p>
+                  </div>
+                </label>
+              ))
+            ) : (
+              <p className="text-gray-500 text-center py-4">No available users to add</p>
+            )}
+          </div>
+
+          <div className="flex justify-end gap-3 pt-4 border-t border-gray-200">
+            <button type="button" onClick={onClose} className="btn btn-secondary">
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="btn btn-primary inline-flex items-center"
+              disabled={addMembersMutation.isLoading || selectedUserIds.length === 0}
+            >
+              <Save className="w-4 h-4 mr-2" />
+              {addMembersMutation.isLoading ? 'Adding...' : `Add ${selectedUserIds.length} Member(s)`}
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );

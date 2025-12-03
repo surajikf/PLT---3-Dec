@@ -6,6 +6,7 @@ import {
   createProject,
   updateProject,
   assignMembers,
+  updateProjectStage,
 } from '../controllers/projectController';
 import { authenticate, authorize } from '../middleware/auth';
 import { validate } from '../middleware/validate';
@@ -27,6 +28,7 @@ router.post(
 );
 router.patch('/:id', updateProject);
 router.post('/:id/members', authorize('SUPER_ADMIN', 'ADMIN', 'PROJECT_MANAGER'), assignMembers);
+router.patch('/:projectId/stages/:projectStageId', authorize('SUPER_ADMIN', 'ADMIN', 'PROJECT_MANAGER'), updateProjectStage);
 
 export default router;
 

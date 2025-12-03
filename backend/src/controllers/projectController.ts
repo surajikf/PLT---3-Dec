@@ -501,6 +501,70 @@ export const assignMembers = async (req: AuthRequest, res: Response, next: NextF
   }
 };
 
+export const updateProjectStage = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { projectId, projectStageId } = req.params;
+    const { status } = req.body;
+    const currentUser = req.user!;
+
+    // Validate status
+    const validStatuses = ['OFF', 'ON', 'IN_PROGRESS', 'CLOSED'];
+    if (!validStatuses.includes(status)) {
+      throw new ValidationError('Invalid stage status');
+    }
+
+    // Check if project exists and user has permission
+    const project = await prisma.project.findUnique({
+      where: { id: projectId },
+    });
+
+    if (!project) {
+      throw new NotFoundError('Project not found');
+    }
+
+    // Check permissions
+    if (currentUser.role !== 'SUPER_ADMIN' && currentUser.role !== 'ADMIN') {
+      if (currentUser.role === 'PROJECT_MANAGER' && project.managerId !== currentUser.userId) {
+        throw new ForbiddenError('Insufficient permissions');
+      }
+    }
+
+    // Update project stage
+    const updateData: any = {
+      status,
+    };
+
+    // Set completed date if closing the stage
+    if (status === 'CLOSED') {
+      updateData.completedDate = new Date();
+    } else {
+      updateData.completedDate = null;
+    }
+
+    const updatedStage = await prisma.projectStage.update({
+      where: { id: projectStageId },
+      data: updateData,
+      include: {
+        stage: true,
+        project: {
+          select: {
+            id: true,
+            code: true,
+            name: true,
+          },
+        },
+      },
+    });
+
+    res.json({
+      success: true,
+      data: updatedStage,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 function calculateHealthScore(budget: number, totalCost: number, progress: number): number {
   const budgetHealth = budget > 0 ? Math.max(0, 100 - (totalCost / budget) * 100) : 100;
   const progressHealth = progress;
