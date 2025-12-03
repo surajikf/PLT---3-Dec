@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from 'react-query';
 import api from '../services/api';
 import toast from 'react-hot-toast';
@@ -22,8 +23,25 @@ import { roleLabels } from '../utils/roles';
 type TabType = 'customers' | 'projects' | 'employees' | 'departments' | 'stages';
 
 const MasterManagementPage = () => {
-  const [activeTab, setActiveTab] = useState<TabType>('customers');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabFromUrl = searchParams.get('tab') as TabType;
+  const [activeTab, setActiveTab] = useState<TabType>(
+    tabFromUrl && ['customers', 'projects', 'employees', 'departments', 'stages'].includes(tabFromUrl)
+      ? tabFromUrl
+      : 'customers'
+  );
   const queryClient = useQueryClient();
+
+  useEffect(() => {
+    if (tabFromUrl && ['customers', 'projects', 'employees', 'departments', 'stages'].includes(tabFromUrl)) {
+      setActiveTab(tabFromUrl);
+    }
+  }, [tabFromUrl]);
+
+  const handleTabChange = (tab: TabType) => {
+    setActiveTab(tab);
+    setSearchParams({ tab });
+  };
 
   const tabs = [
     { id: 'customers' as TabType, label: 'Clients', icon: Building2 },
@@ -59,7 +77,7 @@ const MasterManagementPage = () => {
               return (
                 <button
                   key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
+                  onClick={() => handleTabChange(tab.id)}
                   className={`
                     ${activeTab === tab.id
                       ? 'border-indigo-500 text-indigo-600'
