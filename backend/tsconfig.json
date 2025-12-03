@@ -28,6 +28,7 @@
     "dist",
     "prisma",
     "scripts",
+    "api",
     "**/*.test.ts",
     "**/*.spec.ts"
   ]
