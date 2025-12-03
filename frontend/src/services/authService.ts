@@ -35,13 +35,20 @@ export const authService = {
       const response = await api.post('/auth/login', credentials);
       const { user, token } = response.data.data;
       
-      localStorage.setItem('token', token);
-      localStorage.setItem('user', JSON.stringify(user));
+      try {
+        localStorage.setItem('token', token);
+        localStorage.setItem('user', JSON.stringify(user));
+      } catch (storageError) {
+        console.error('localStorage error:', storageError);
+        // Continue even if localStorage fails (might be in private browsing mode)
+      }
       
       toast.success('Login successful!');
       return { user, token };
     } catch (error: any) {
-      toast.error(error.response?.data?.error || 'Login failed');
+      const errorMessage = error.response?.data?.error || error.message || 'Login failed';
+      toast.error(errorMessage);
+      console.error('Login error:', error);
       throw error;
     }
   },
