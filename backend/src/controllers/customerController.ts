@@ -1,0 +1,174 @@
+import { Response, NextFunction } from 'express';
+import prisma from '../utils/prisma';
+import { NotFoundError, ForbiddenError } from '../utils/errors';
+import { AuthRequest } from '../middleware/auth';
+
+export const getCustomers = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { status, search, page = 1, limit = 50 } = req.query;
+
+    const where: any = {};
+    if (status) where.status = status;
+    if (search) {
+      where.OR = [
+        { name: { contains: search as string, mode: 'insensitive' } },
+        { email: { contains: search as string, mode: 'insensitive' } },
+        { contactPerson: { contains: search as string, mode: 'insensitive' } },
+      ];
+    }
+
+    const skip = (Number(page) - 1) * Number(limit);
+
+    const [customers, total] = await Promise.all([
+      prisma.customer.findMany({
+        where,
+        skip,
+        take: Number(limit),
+        include: {
+          _count: {
+            select: {
+              projects: true,
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+      prisma.customer.count({ where }),
+    ]);
+
+    res.json({
+      success: true,
+      data: customers,
+      pagination: {
+        page: Number(page),
+        limit: Number(limit),
+        total,
+        pages: Math.ceil(total / Number(limit)),
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getCustomerById = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { id } = req.params;
+
+    const customer = await prisma.customer.findUnique({
+      where: { id },
+      include: {
+        projects: {
+          select: {
+            id: true,
+            code: true,
+            name: true,
+            status: true,
+            budget: true,
+            startDate: true,
+            endDate: true,
+          },
+        },
+      },
+    });
+
+    if (!customer) {
+      throw new NotFoundError('Customer not found');
+    }
+
+    res.json({
+      success: true,
+      data: customer,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const createCustomer = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const currentUser = req.user!;
+
+    if (currentUser.role === 'CLIENT' || currentUser.role === 'TEAM_MEMBER') {
+      throw new ForbiddenError('Insufficient permissions');
+    }
+
+    const { name, industry, contactPerson, email, phone, address, status } = req.body;
+
+    const customer = await prisma.customer.create({
+      data: {
+        name,
+        industry: industry || null,
+        contactPerson: contactPerson || null,
+        email: email || null,
+        phone: phone || null,
+        address: address || null,
+        status: status || 'ACTIVE',
+      },
+    });
+
+    res.status(201).json({
+      success: true,
+      data: customer,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const updateCustomer = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { id } = req.params;
+    const currentUser = req.user!;
+
+    if (currentUser.role === 'CLIENT' || currentUser.role === 'TEAM_MEMBER') {
+      throw new ForbiddenError('Insufficient permissions');
+    }
+
+    const { name, industry, contactPerson, email, phone, address, status } = req.body;
+    const updateData: any = {};
+
+    if (name !== undefined) updateData.name = name;
+    if (industry !== undefined) updateData.industry = industry;
+    if (contactPerson !== undefined) updateData.contactPerson = contactPerson;
+    if (email !== undefined) updateData.email = email;
+    if (phone !== undefined) updateData.phone = phone;
+    if (address !== undefined) updateData.address = address;
+    if (status !== undefined) updateData.status = status;
+
+    const customer = await prisma.customer.update({
+      where: { id },
+      data: updateData,
+    });
+
+    res.json({
+      success: true,
+      data: customer,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const deleteCustomer = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { id } = req.params;
+    const currentUser = req.user!;
+
+    if (currentUser.role !== 'SUPER_ADMIN' && currentUser.role !== 'ADMIN') {
+      throw new ForbiddenError('Insufficient permissions');
+    }
+
+    await prisma.customer.delete({
+      where: { id },
+    });
+
+    res.json({
+      success: true,
+      message: 'Customer deleted successfully',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
