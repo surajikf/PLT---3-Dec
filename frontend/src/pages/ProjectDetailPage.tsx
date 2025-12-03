@@ -1,15 +1,14 @@
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from 'react-query';
 import api from '../services/api';
-import { ArrowLeft, Users, Clock, TrendingUp, AlertCircle, Plus, CheckCircle, XCircle, Edit, Link as LinkIcon, FileText, Trash2, Save, X } from 'lucide-react';
-import { RupeeIcon } from '../components/RupeeIcon';
+import { ArrowLeft, Users, Clock, TrendingUp, AlertCircle, Plus, CheckCircle, Edit, Link as LinkIcon, FileText, Trash2, Save, X } from 'lucide-react';
 import { formatCurrency, formatCurrencyTooltip } from '../utils/currency';
 import { format } from 'date-fns';
 import { useState } from 'react';
 import { authService } from '../services/authService';
 import { UserRole } from '../utils/roles';
 import toast from 'react-hot-toast';
-import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
+import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
 const ProjectDetailPage = () => {
   const { id } = useParams();

@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { useQuery } from 'react-query';
 import api from '../services/api';
-import { BarChart3, Download } from 'lucide-react';
+import { Download } from 'lucide-react';
 import { formatCurrency } from '../utils/currency';
-import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { exportReportsToCSV } from '../utils/csvExport';
 import toast from 'react-hot-toast';
 
@@ -228,7 +228,7 @@ const ReportsPage = () => {
                         fill="#8884d8"
                         dataKey="value"
                       >
-                        {departmentReport.departments.map((entry: any, index: number) => {
+                        {departmentReport.departments.map((_entry: any, index: number) => {
                           const colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
                           return <Cell key={`cell-${index}`} fill={colors[index % colors.length]} />;
                         })}

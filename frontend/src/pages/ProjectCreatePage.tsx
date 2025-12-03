@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from 'react-query';
 import api from '../services/api';
-import { ArrowLeft, Save, Plus, X, AlertCircle } from 'lucide-react';
+import { ArrowLeft, Save, AlertCircle } from 'lucide-react';
+// Note: Plus and X were removed as they were unused
 import toast from 'react-hot-toast';
 import { formatCurrency } from '../utils/currency';
 

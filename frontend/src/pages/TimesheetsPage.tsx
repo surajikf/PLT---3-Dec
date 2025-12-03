@@ -133,6 +133,7 @@ const TimesheetsPage = () => {
         setFormData({
           projectId: '',
           taskId: '',
+          taskName: '',
           date: new Date().toISOString().split('T')[0],
           hours: 0,
           minutes: 0,
