@@ -1,11 +1,11 @@
 import { useQuery } from 'react-query';
 import api from '../services/api';
-import { TrendingUp, TrendingDown, Users, Briefcase, AlertCircle, BarChart3, PieChart as PieChartIcon } from 'lucide-react';
+import { TrendingUp, TrendingDown, Users, Briefcase } from 'lucide-react';
 import { RupeeIcon } from '../components/RupeeIcon';
 import { formatCurrency, formatCurrencyTooltip } from '../utils/currency';
 import { Link } from 'react-router-dom';
 import { useState } from 'react';
-import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 
 const COLORS = ['#10b981', '#ef4444', '#3b82f6', '#f59e0b', '#8b5cf6'];
 
@@ -227,7 +227,7 @@ const ProfitLossPage = () => {
                     fill="#8884d8"
                     dataKey="value"
                   >
-                    {projectStatusData.map((entry, index) => (
+                    {projectStatusData.map((_entry, index) => (
                       <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                     ))}
                   </Pie>

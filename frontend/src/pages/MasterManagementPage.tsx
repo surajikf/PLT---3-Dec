@@ -30,8 +30,6 @@ const MasterManagementPage = () => {
       ? tabFromUrl
       : 'customers'
   );
-  const queryClient = useQueryClient();
-
   useEffect(() => {
     if (tabFromUrl && ['customers', 'projects', 'employees', 'departments', 'stages'].includes(tabFromUrl)) {
       setActiveTab(tabFromUrl);

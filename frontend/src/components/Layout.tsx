@@ -1,8 +1,7 @@
 import { Outlet, Link, useNavigate, useLocation } from 'react-router-dom';
 import { authService } from '../services/authService';
 import { UserRole, roleLabels } from '../utils/roles';
-import { LayoutDashboard, FolderKanban, Clock, FileText, Users, Building2, BarChart3, Settings, LogOut, Link as LinkIcon, User, Menu, X, TrendingUp, Database } from 'lucide-react';
-import toast from 'react-hot-toast';
+import { LayoutDashboard, FolderKanban, Clock, Users, Building2, BarChart3, Settings, LogOut, Link as LinkIcon, User, Menu, X, TrendingUp, Database } from 'lucide-react';
 import { useState } from 'react';
 
 const Layout = () => {

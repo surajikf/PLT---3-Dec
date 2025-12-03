@@ -285,7 +285,8 @@ const TimesheetsPage = () => {
                     setFormData({ 
                       ...formData, 
                       projectId: e.target.value,
-                      taskId: '' // Reset task when project changes
+                      taskId: '', // Reset task when project changes
+                      taskName: '' // Reset task name when project changes
                     });
                   }}
                 >
