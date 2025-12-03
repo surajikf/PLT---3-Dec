@@ -1,6 +1,6 @@
 import { useQuery } from 'react-query';
 import api from '../services/api';
-import { TrendingUp, TrendingDown, Users, Briefcase } from 'lucide-react';
+import { TrendingUp, TrendingDown, Users, Briefcase, BarChart3 } from 'lucide-react';
 import { RupeeIcon } from '../components/RupeeIcon';
 import { formatCurrency, formatCurrencyTooltip } from '../utils/currency';
 import { Link } from 'react-router-dom';
