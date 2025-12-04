@@ -1,31 +1,36 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { lazy, Suspense } from 'react';
 import { authService } from './services/authService';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { UserRole } from './utils/roles';
+import ErrorBoundary from './components/ErrorBoundary';
+import LoadingSkeleton from './components/LoadingSkeleton';
 
-// Pages
-import LoginPage from './pages/LoginPage';
-import RegisterPage from './pages/RegisterPage';
-import DashboardPage from './pages/DashboardPage';
-import ProjectsPage from './pages/ProjectsPage';
-import ProjectDetailPage from './pages/ProjectDetailPage';
-import TimesheetsPage from './pages/TimesheetsPage';
-import CustomersPage from './pages/CustomersPage';
-import ResourcesPage from './pages/ResourcesPage';
-import ReportsPage from './pages/ReportsPage';
-import UsersPage from './pages/UsersPage';
-import DepartmentsPage from './pages/DepartmentsPage';
-import ProfitLossPage from './pages/ProfitLossPage';
-import ProjectCreatePage from './pages/ProjectCreatePage';
-import MasterManagementPage from './pages/MasterManagementPage';
-import Layout from './components/Layout';
+// Lazy load pages for code splitting
+const LoginPage = lazy(() => import('./pages/LoginPage'));
+const RegisterPage = lazy(() => import('./pages/RegisterPage'));
+const DashboardPage = lazy(() => import('./pages/DashboardPage'));
+const ProjectsPage = lazy(() => import('./pages/ProjectsPage'));
+const ProjectDetailPage = lazy(() => import('./pages/ProjectDetailPage'));
+const TimesheetsPage = lazy(() => import('./pages/TimesheetsPage'));
+const CustomersPage = lazy(() => import('./pages/CustomersPage'));
+const ResourcesPage = lazy(() => import('./pages/ResourcesPage'));
+const ReportsPage = lazy(() => import('./pages/ReportsPage'));
+const UsersPage = lazy(() => import('./pages/UsersPage'));
+const DepartmentsPage = lazy(() => import('./pages/DepartmentsPage'));
+const ProfitLossPage = lazy(() => import('./pages/ProfitLossPage'));
+const ProjectCreatePage = lazy(() => import('./pages/ProjectCreatePage'));
+const MasterManagementPage = lazy(() => import('./pages/MasterManagementPage'));
+const Layout = lazy(() => import('./components/Layout'));
 
 function App() {
   const isAuthenticated = authService.isAuthenticated();
 
   return (
-    <BrowserRouter>
-      <Routes>
+    <ErrorBoundary>
+      <BrowserRouter>
+        <Suspense fallback={<LoadingSkeleton />}>
+          <Routes>
         <Route
           path="/login"
           element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <LoginPage />}
@@ -97,9 +102,11 @@ function App() {
               </ProtectedRoute>
             }
           />
-        </Route>
-      </Routes>
-    </BrowserRouter>
+          </Route>
+        </Routes>
+        </Suspense>
+      </BrowserRouter>
+    </ErrorBoundary>
   );
 }
 

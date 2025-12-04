@@ -27,11 +27,44 @@ api.interceptors.request.use(
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
-      window.location.href = '/login';
+    // Handle network errors
+    if (!error.response) {
+      // Network error - no response from server
+      if (error.message === 'Network Error' || error.code === 'ERR_NETWORK') {
+        error.networkError = true;
+        error.userMessage = 'Unable to connect to server. Please check your internet connection and try again.';
+      }
+      return Promise.reject(error);
     }
+
+    // Handle HTTP status codes
+    if (error.response?.status === 401) {
+      // Don't logout on 401 if it's a silent failure (like /users endpoint for non-admins)
+      // Only logout if it's a real authentication failure
+      const isSilentFailure = error.config?.url?.includes('/users') && 
+                               error.response?.data?.error?.includes('permission');
+      
+      if (!isSilentFailure) {
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        // Only redirect if not already on login page
+        if (window.location.pathname !== '/login') {
+          window.location.href = '/login';
+        }
+      }
+    } else if (error.response?.status === 403) {
+      error.userMessage = error.response?.data?.error || 'You do not have permission to perform this action.';
+    } else if (error.response?.status === 404) {
+      error.userMessage = error.response?.data?.error || 'The requested resource was not found.';
+    } else if (error.response?.status === 422) {
+      // Validation errors
+      error.userMessage = error.response?.data?.error || 'Please check your input and try again.';
+    } else if (error.response?.status >= 500) {
+      error.userMessage = 'A server error occurred. Please try again later or contact support if the problem persists.';
+    } else {
+      error.userMessage = error.response?.data?.error || 'An unexpected error occurred. Please try again.';
+    }
+
     return Promise.reject(error);
   }
 );

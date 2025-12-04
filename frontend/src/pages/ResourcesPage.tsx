@@ -1,16 +1,30 @@
 import { useQuery, useMutation, useQueryClient } from 'react-query';
 import api from '../services/api';
-import { ExternalLink, Plus, Edit, Trash2, X, Save } from 'lucide-react';
+import { ExternalLink, Plus, Edit, Trash2, X, Save, Link as LinkIcon, Loader2 } from 'lucide-react';
 import { useState } from 'react';
 import { authService } from '../services/authService';
 import { UserRole } from '../utils/roles';
 import toast from 'react-hot-toast';
+import Breadcrumbs from '../components/Breadcrumbs';
 
 const ResourcesPage = () => {
   const user = authService.getCurrentUser();
   const queryClient = useQueryClient();
   const [resourceModalOpen, setResourceModalOpen] = useState(false);
   const [editingResource, setEditingResource] = useState<any>(null);
+  const [confirmDialog, setConfirmDialog] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    type: 'danger' | 'warning' | 'info' | 'success';
+    onConfirm: () => void;
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    type: 'warning',
+    onConfirm: () => {},
+  });
 
   const { data, isLoading } = useQuery('resources', async () => {
     const res = await api.get('/resources');
@@ -44,19 +58,20 @@ const ResourcesPage = () => {
         queryClient.invalidateQueries('resources');
       },
       onError: (error: any) => {
-        toast.error(error.response?.data?.error || 'Failed to delete resource');
+        const errorMessage = error.userMessage || error.response?.data?.error || 'Failed to delete resource';
+        toast.error(errorMessage);
       },
     }
   );
 
-  if (isLoading) {
-    return <p>Loading...</p>;
-  }
-
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h1 className="text-3xl font-bold text-gray-900">Resources</h1>
+      <Breadcrumbs items={[{ label: 'Resources' }]} />
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold text-gray-900">Resources</h1>
+          <p className="mt-1 text-sm text-gray-500">Access and manage project resources and documents</p>
+        </div>
         {canManage && (
           <button
             onClick={() => {
@@ -71,10 +86,15 @@ const ResourcesPage = () => {
         )}
       </div>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-        {data && data.length > 0 ? (
-          data.map((resource: any) => (
-            <div key={resource.id} className="card hover:shadow-lg transition-shadow relative">
+      {isLoading ? (
+        <div className="flex flex-col items-center justify-center py-12">
+          <Loader2 className="w-8 h-8 animate-spin text-primary-600 mb-4" />
+          <p className="text-gray-500">Loading resources...</p>
+        </div>
+      ) : data && data.length > 0 ? (
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+          {data.map((resource: any) => (
+            <div key={resource.id} className="card hover:shadow-lg transition-all duration-200 hover:border-primary-300 relative group">
               <div className="flex justify-between items-start mb-2">
                 <h3 className="text-lg font-semibold text-gray-900">{resource.name}</h3>
                 <div className="flex items-center gap-2">
@@ -95,9 +115,16 @@ const ResourcesPage = () => {
                       </button>
                       <button
                         onClick={() => {
-                          if (window.confirm('Are you sure you want to delete this resource?')) {
-                            deleteMutation.mutate(resource.id);
-                          }
+                          setConfirmDialog({
+                            isOpen: true,
+                            title: 'Delete Resource',
+                            message: `Are you sure you want to delete "${resource.title}"? This action cannot be undone.`,
+                            type: 'danger',
+                            onConfirm: () => {
+                              deleteMutation.mutate(resource.id);
+                              setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+                            },
+                          });
                         }}
                         className="text-red-600 hover:text-red-900"
                         title="Delete resource"
@@ -116,21 +143,38 @@ const ResourcesPage = () => {
                   href={resource.url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center text-primary-600 hover:text-primary-700 text-sm font-medium"
+                  className="inline-flex items-center text-primary-600 hover:text-primary-700 text-sm font-medium transition-colors"
+                  onClick={(e) => e.stopPropagation()}
                 >
                   <ExternalLink className="w-4 h-4 mr-1" />
-                  Access via Drive
+                  Access Resource
                 </a>
               )}
               {resource.project && (
-                <p className="text-xs text-gray-500 mt-2">Project: {resource.project.name}</p>
+                <p className="text-xs text-gray-500 mt-2">Project: <span className="font-medium">{resource.project.name}</span></p>
               )}
             </div>
-          ))
-        ) : (
-          <p className="text-gray-500">No resources found</p>
-        )}
-      </div>
+          ))}
+        </div>
+      ) : (
+        <div className="text-center py-12">
+          <LinkIcon className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+          <h3 className="text-sm font-medium text-gray-900 mb-1">No resources found</h3>
+          <p className="text-sm text-gray-500 mb-6">Get started by adding your first resource</p>
+          {canManage && (
+            <button
+              onClick={() => {
+                setEditingResource(null);
+                setResourceModalOpen(true);
+              }}
+              className="btn btn-primary inline-flex items-center"
+            >
+              <Plus className="w-5 h-5 mr-2" />
+              Add Your First Resource
+            </button>
+          )}
+        </div>
+      )}
 
       {resourceModalOpen && (
         <ResourceModal
@@ -188,7 +232,8 @@ const ResourceModal = ({ resource, projects, resourceTypes, onClose }: { resourc
         onClose();
       },
       onError: (error: any) => {
-        toast.error(error.response?.data?.error || 'Failed to update resource');
+        const errorMessage = error.userMessage || error.response?.data?.error || 'Failed to update resource';
+        toast.error(errorMessage);
       },
     }
   );

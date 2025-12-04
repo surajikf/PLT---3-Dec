@@ -1,7 +1,7 @@
 import { Outlet, Link, useNavigate, useLocation } from 'react-router-dom';
 import { authService } from '../services/authService';
 import { UserRole, roleLabels } from '../utils/roles';
-import { LayoutDashboard, FolderKanban, Clock, Users, Building2, BarChart3, Settings, LogOut, Link as LinkIcon, User, Menu, X, TrendingUp, Database } from 'lucide-react';
+import { LayoutDashboard, FolderKanban, Clock, BarChart3, LogOut, Link as LinkIcon, User, Menu, X, TrendingUp, Database } from 'lucide-react';
 import { useState } from 'react';
 
 const Layout = () => {
@@ -22,10 +22,7 @@ const Layout = () => {
     { path: '/projects', label: 'Projects', icon: FolderKanban, roles: [UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER, UserRole.TEAM_MEMBER, UserRole.CLIENT] },
     { path: '/timesheets', label: 'Timesheets', icon: Clock, roles: [UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER, UserRole.TEAM_MEMBER] },
     { path: '/resources', label: 'Resources', icon: LinkIcon, roles: [UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER, UserRole.TEAM_MEMBER, UserRole.CLIENT] },
-    { path: '/customers', label: 'Customers', icon: Building2, roles: [UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER] },
     { path: '/reports', label: 'Reports', icon: BarChart3, roles: [UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER] },
-    { path: '/users', label: 'Users', icon: Users, roles: [UserRole.SUPER_ADMIN, UserRole.ADMIN] },
-    { path: '/departments', label: 'Departments', icon: Settings, roles: [UserRole.SUPER_ADMIN, UserRole.ADMIN] },
     { path: '/profit-loss', label: 'Profit & Loss', icon: TrendingUp, roles: [UserRole.SUPER_ADMIN, UserRole.ADMIN] },
     { path: '/master-management', label: 'Master Management', icon: Database, roles: [UserRole.SUPER_ADMIN, UserRole.ADMIN] },
   ];

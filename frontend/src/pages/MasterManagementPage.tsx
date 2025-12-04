@@ -15,10 +15,14 @@ import {
   Trash2,
   X,
   Save,
-  Search
+  Search,
+  MoreVertical,
+  UserCheck,
+  UserX
 } from 'lucide-react';
 import { formatCurrency } from '../utils/currency';
 import { roleLabels } from '../utils/roles';
+import { authService } from '../services/authService';
 
 type TabType = 'customers' | 'projects' | 'employees' | 'departments' | 'stages';
 
@@ -110,7 +114,21 @@ const CustomersManagement = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<any>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [selectedCustomers, setSelectedCustomers] = useState<Set<string>>(new Set());
   const queryClient = useQueryClient();
+  const [confirmDialog, setConfirmDialog] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    type: 'danger' | 'warning' | 'info' | 'success';
+    onConfirm: () => void;
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    type: 'warning',
+    onConfirm: () => {},
+  });
 
   const { data: customers, isLoading } = useQuery('customers', async () => {
     const res = await api.get('/customers');
@@ -127,7 +145,8 @@ const CustomersManagement = () => {
         queryClient.invalidateQueries('customers');
       },
       onError: (error: any) => {
-        toast.error(error.response?.data?.error || 'Failed to delete customer');
+        const errorMessage = error.userMessage || error.response?.data?.error || 'Failed to delete customer';
+        toast.error(errorMessage);
       },
     }
   );
@@ -138,8 +157,138 @@ const CustomersManagement = () => {
     c.industry?.toLowerCase().includes(searchTerm.toLowerCase())
   ) || [];
 
+  const bulkStatusUpdateMutation = useMutation(
+    async ({ ids, status }: { ids: string[]; status: string }) => {
+      const res = await api.post('/customers/bulk/status', { ids, status });
+      return res.data;
+    },
+    {
+      onSuccess: () => {
+        toast.success('Customers updated successfully');
+        setSelectedCustomers(new Set());
+        queryClient.invalidateQueries('customers');
+      },
+      onError: (error: any) => {
+        const errorMessage = error.userMessage || error.response?.data?.error || 'Failed to update customers';
+        toast.error(errorMessage);
+      },
+    }
+  );
+
+  const bulkDeleteMutation = useMutation(
+    async (ids: string[]) => {
+      const res = await api.post('/customers/bulk/delete', { ids });
+      return res.data;
+    },
+    {
+      onSuccess: () => {
+        toast.success('Customers deleted successfully');
+        setSelectedCustomers(new Set());
+        queryClient.invalidateQueries('customers');
+      },
+      onError: (error: any) => {
+        const errorMessage = error.userMessage || error.response?.data?.error || 'Failed to delete customers';
+        toast.error(errorMessage);
+      },
+    }
+  );
+
+  const handleSelectAll = (checked: boolean) => {
+    if (checked) {
+      setSelectedCustomers(new Set(filteredCustomers.map((c: any) => c.id)));
+    } else {
+      setSelectedCustomers(new Set());
+    }
+  };
+
+  const handleSelectCustomer = (id: string, checked: boolean) => {
+    const newSelected = new Set(selectedCustomers);
+    if (checked) {
+      newSelected.add(id);
+    } else {
+      newSelected.delete(id);
+    }
+    setSelectedCustomers(newSelected);
+  };
+
+  const handleBulkStatusChange = (status: string) => {
+    if (selectedCustomers.size === 0) {
+      toast.error('Please select at least one customer');
+      return;
+    }
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Change Customer Status',
+      message: `Are you sure you want to change the status of ${selectedCustomers.size} customer(s) to ${status}?`,
+      type: 'warning',
+      onConfirm: () => {
+        bulkStatusUpdateMutation.mutate({ ids: Array.from(selectedCustomers), status });
+        setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+      },
+    });
+  };
+
+  const handleBulkDelete = () => {
+    if (selectedCustomers.size === 0) {
+      toast.error('Please select at least one customer');
+      return;
+    }
+    if (window.confirm(`Are you sure you want to delete ${selectedCustomers.size} customer(s)? This action cannot be undone.`)) {
+      bulkDeleteMutation.mutate(Array.from(selectedCustomers));
+    }
+  };
+
+  const allSelected = filteredCustomers.length > 0 && filteredCustomers.every((c: any) => selectedCustomers.has(c.id));
+  const someSelected = selectedCustomers.size > 0 && !allSelected;
+
   return (
     <div className="space-y-4">
+      {/* Bulk Actions Toolbar */}
+      {selectedCustomers.size > 0 && (
+        <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium text-indigo-900">
+                {selectedCustomers.size} customer{selectedCustomers.size > 1 ? 's' : ''} selected
+              </span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <div className="relative">
+                <select
+                  onChange={(e) => {
+                    if (e.target.value) {
+                      handleBulkStatusChange(e.target.value);
+                      e.target.value = '';
+                    }
+                  }}
+                  className="input pr-8 text-sm"
+                  disabled={bulkStatusUpdateMutation.isLoading}
+                >
+                  <option value="">Change Status...</option>
+                  <option value="ACTIVE">Active</option>
+                  <option value="INACTIVE">Inactive</option>
+                </select>
+                <MoreVertical className="absolute right-2 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+              </div>
+              <button
+                onClick={handleBulkDelete}
+                disabled={bulkDeleteMutation.isLoading}
+                className="btn btn-danger text-sm inline-flex items-center"
+              >
+                <Trash2 className="w-4 h-4 mr-1" />
+                Delete ({selectedCustomers.size})
+              </button>
+              <button
+                onClick={() => setSelectedCustomers(new Set())}
+                className="btn btn-secondary text-sm"
+              >
+                Clear Selection
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="flex justify-between items-center">
         <div className="flex-1 max-w-md">
           <div className="relative">
@@ -184,7 +333,15 @@ const CustomersManagement = () => {
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {filteredCustomers.map((customer: any) => (
-                <tr key={customer.id} className="hover:bg-gray-50">
+                <tr key={customer.id} className={`hover:bg-gray-50 ${selectedCustomers.has(customer.id) ? 'bg-primary-50' : ''}`}>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <input
+                      type="checkbox"
+                      checked={selectedCustomers.has(customer.id)}
+                      onChange={(e) => handleSelectCustomer(customer.id, e.target.checked)}
+                      className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                    />
+                  </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                     {customer.name}
                   </td>
@@ -220,9 +377,16 @@ const CustomersManagement = () => {
                     </button>
                     <button
                       onClick={() => {
-                        if (window.confirm('Are you sure you want to delete this customer?')) {
-                          deleteMutation.mutate(customer.id);
-                        }
+                        setConfirmDialog({
+                          isOpen: true,
+                          title: 'Delete Customer',
+                          message: `Are you sure you want to permanently delete "${customer.name}"? This action cannot be undone and will remove all associated data including projects.`,
+                          type: 'danger',
+                          onConfirm: () => {
+                            deleteMutation.mutate(customer.id);
+                            setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+                          },
+                        });
                       }}
                       className="text-red-600 hover:text-red-900"
                     >
@@ -291,7 +455,8 @@ const CustomerModal = ({ customer, onClose }: { customer: any; onClose: () => vo
         onClose();
       },
       onError: (error: any) => {
-        toast.error(error.response?.data?.error || 'Failed to update customer');
+        const errorMessage = error.userMessage || error.response?.data?.error || 'Failed to update customer';
+        toast.error(errorMessage);
       },
     }
   );
@@ -433,23 +598,55 @@ const ProjectsManagement = () => {
   const [editingProject, setEditingProject] = useState<any>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const editProjectId = searchParams.get('edit');
+  const [confirmDialog, setConfirmDialog] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    type: 'danger' | 'warning' | 'info' | 'success';
+    onConfirm: () => void;
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    type: 'warning',
+    onConfirm: () => {},
+  });
 
   const { data: projects, isLoading } = useQuery('all-projects', async () => {
     const res = await api.get('/projects');
     return res.data.data || [];
   });
 
-  const deleteMutation = useMutation(
+  // Auto-open edit modal if edit parameter is present
+  useEffect(() => {
+    if (editProjectId && projects && Array.isArray(projects) && !editingProject && !isLoading) {
+      const projectToEdit = projects.find((p: any) => p && p.id === editProjectId);
+      if (projectToEdit) {
+        setEditingProject(projectToEdit);
+        setIsModalOpen(true);
+        // Remove edit parameter from URL after opening modal
+        const newParams = new URLSearchParams(searchParams);
+        newParams.delete('edit');
+        setSearchParams(newParams, { replace: true });
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editProjectId, projects, isLoading]);
+
+  const archiveMutation = useMutation(
     async (id: string) => {
-      await api.delete(`/projects/${id}`);
+      await api.post('/projects/bulk/delete', { ids: [id] });
     },
     {
       onSuccess: () => {
-        toast.success('Project deleted successfully');
+        toast.success('Project archived successfully');
         queryClient.invalidateQueries('all-projects');
       },
       onError: (error: any) => {
-        toast.error(error.response?.data?.error || 'Failed to delete project');
+        const errorMessage = error.userMessage || error.response?.data?.error || 'Failed to archive project';
+        toast.error(errorMessage);
       },
     }
   );
@@ -546,11 +743,18 @@ const ProjectsManagement = () => {
                     </button>
                     <button
                       onClick={() => {
-                        if (window.confirm('Are you sure you want to delete this project?')) {
-                          deleteMutation.mutate(project.id);
-                        }
+                        setConfirmDialog({
+                          isOpen: true,
+                          title: 'Archive Project',
+                          message: `Are you sure you want to archive "${project.name}"? Archived projects will be moved to trash and can be restored later.`,
+                          type: 'warning',
+                          onConfirm: () => {
+                            archiveMutation.mutate(project.id);
+                            setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+                          },
+                        });
                       }}
-                      className="text-red-600 hover:text-red-900"
+                      className="text-yellow-600 hover:text-yellow-900"
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
@@ -568,6 +772,10 @@ const ProjectsManagement = () => {
           onClose={() => {
             setIsModalOpen(false);
             setEditingProject(null);
+            // Remove edit parameter from URL when closing
+            const newParams = new URLSearchParams(searchParams);
+            newParams.delete('edit');
+            setSearchParams(newParams, { replace: true });
           }}
         />
       )}
@@ -623,7 +831,8 @@ const ProjectModal = ({ project, onClose }: { project: any; onClose: () => void 
         onClose();
       },
       onError: (error: any) => {
-        toast.error(error.response?.data?.error || 'Failed to create project');
+        const errorMessage = error.userMessage || error.response?.data?.error || 'Failed to create project';
+        toast.error(errorMessage);
       },
     }
   );
@@ -640,7 +849,8 @@ const ProjectModal = ({ project, onClose }: { project: any; onClose: () => void 
         onClose();
       },
       onError: (error: any) => {
-        toast.error(error.response?.data?.error || 'Failed to update project');
+        const errorMessage = error.userMessage || error.response?.data?.error || 'Failed to update project';
+        toast.error(errorMessage);
       },
     }
   );
@@ -820,6 +1030,19 @@ const EmployeesManagement = () => {
   const [editingEmployee, setEditingEmployee] = useState<any>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const queryClient = useQueryClient();
+  const [confirmDialog, setConfirmDialog] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    type: 'danger' | 'warning' | 'info' | 'success';
+    onConfirm: () => void;
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    type: 'warning',
+    onConfirm: () => {},
+  });
 
   const { data: employees, isLoading } = useQuery('users', async () => {
     const res = await api.get('/users');
@@ -836,16 +1059,25 @@ const EmployeesManagement = () => {
         queryClient.invalidateQueries('users');
       },
       onError: (error: any) => {
-        toast.error(error.response?.data?.error || 'Failed to delete employee');
+        const errorMessage = error.userMessage || error.response?.data?.error || 'Failed to delete employee';
+        toast.error(errorMessage);
       },
     }
   );
 
-  const filteredEmployees = employees?.filter((e: any) =>
-    `${e.firstName} ${e.lastName}`.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    e.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    e.department?.name?.toLowerCase().includes(searchTerm.toLowerCase())
-  ) || [];
+  // Filter to exclude clients - only show employees and internal staff
+  const filteredEmployees = employees?.filter((e: any) => {
+    // Exclude clients from employees list
+    if (e.role === 'CLIENT') {
+      return false;
+    }
+    // Apply search filter
+    return (
+      `${e.firstName} ${e.lastName}`.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      e.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      e.department?.name?.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+  }) || [];
 
   return (
     <div className="space-y-4">
@@ -933,9 +1165,16 @@ const EmployeesManagement = () => {
                     </button>
                     <button
                       onClick={() => {
-                        if (window.confirm('Are you sure you want to delete this employee?')) {
-                          deleteMutation.mutate(employee.id);
-                        }
+                        setConfirmDialog({
+                          isOpen: true,
+                          title: 'Delete Employee',
+                          message: `Are you sure you want to permanently delete "${employee.firstName} ${employee.lastName}"? This action cannot be undone and will remove all associated data.`,
+                          type: 'danger',
+                          onConfirm: () => {
+                            deleteMutation.mutate(employee.id);
+                            setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+                          },
+                        });
                       }}
                       className="text-red-600 hover:text-red-900"
                     >
@@ -975,6 +1214,10 @@ const EmployeeModal = ({ employee, onClose }: { employee: any; onClose: () => vo
     isActive: employee?.isActive !== undefined ? employee.isActive : true,
   });
   const queryClient = useQueryClient();
+  
+  // Get current user to check permissions
+  const currentUser = authService.getCurrentUser();
+  const canChangeRole = currentUser && currentUser.role === 'SUPER_ADMIN';
 
   const { data: departments } = useQuery('departments', async () => {
     const res = await api.get('/departments');
@@ -983,7 +1226,7 @@ const EmployeeModal = ({ employee, onClose }: { employee: any; onClose: () => vo
 
   const createMutation = useMutation(
     async (data: any) => {
-      const res = await api.post('/auth/register', data);
+      const res = await api.post('/users', data);
       return res.data;
     },
     {
@@ -993,7 +1236,12 @@ const EmployeeModal = ({ employee, onClose }: { employee: any; onClose: () => vo
         onClose();
       },
       onError: (error: any) => {
-        toast.error(error.response?.data?.error || 'Failed to create employee');
+        const errorMessage = error.userMessage || error.response?.data?.error || 'Failed to create employee';
+        toast.error(errorMessage);
+        // Log detailed error for debugging
+        if (process.env.NODE_ENV === 'development') {
+          console.error('Employee creation error:', error.response?.data || error);
+        }
       },
     }
   );
@@ -1010,13 +1258,27 @@ const EmployeeModal = ({ employee, onClose }: { employee: any; onClose: () => vo
         onClose();
       },
       onError: (error: any) => {
-        toast.error(error.response?.data?.error || 'Failed to update employee');
+        const errorMessage = error.userMessage || error.response?.data?.error || 'Failed to update employee';
+        toast.error(errorMessage);
       },
     }
   );
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Validate password length for new employees
+    if (!employee) {
+      if (!formData.password) {
+        toast.error('Password is required for new employees');
+        return;
+      }
+      if (formData.password.length < 8) {
+        toast.error('Password must be at least 8 characters long');
+        return;
+      }
+    }
+    
     const submitData: any = {
       ...formData,
       hourlyRate: formData.hourlyRate ? parseFloat(formData.hourlyRate.toString()) : null,
@@ -1026,10 +1288,6 @@ const EmployeeModal = ({ employee, onClose }: { employee: any; onClose: () => vo
       delete submitData.password;
       updateMutation.mutate(submitData);
     } else {
-      if (!submitData.password) {
-        toast.error('Password is required for new employees');
-        return;
-      }
       createMutation.mutate(submitData);
     }
   };
@@ -1096,8 +1354,11 @@ const EmployeeModal = ({ employee, onClose }: { employee: any; onClose: () => vo
                   value={formData.password}
                   onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                   className="input"
-                  minLength={6}
+                  minLength={8}
                 />
+                <p className="mt-1 text-xs text-gray-500">
+                  Password must be at least 8 characters long
+                </p>
               </div>
             )}
             <div>
@@ -1109,12 +1370,19 @@ const EmployeeModal = ({ employee, onClose }: { employee: any; onClose: () => vo
                 onChange={(e) => setFormData({ ...formData, role: e.target.value })}
                 className="input"
                 required
+                disabled={!canChangeRole}
               >
                 <option value="TEAM_MEMBER">Team Member</option>
                 <option value="PROJECT_MANAGER">Project Manager</option>
                 <option value="ADMIN">Admin</option>
                 <option value="SUPER_ADMIN">Super Admin</option>
+                {/* Clients should be managed in the Clients tab, not here */}
               </select>
+              {!canChangeRole && (
+                <p className="mt-1 text-xs text-gray-500">
+                  Only Super Admin can change roles
+                </p>
+              )}
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Department</label>
@@ -1180,6 +1448,19 @@ const DepartmentsManagement = () => {
   const [editingDepartment, setEditingDepartment] = useState<any>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const queryClient = useQueryClient();
+  const [confirmDialog, setConfirmDialog] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    type: 'danger' | 'warning' | 'info' | 'success';
+    onConfirm: () => void;
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    type: 'warning',
+    onConfirm: () => {},
+  });
 
   const { data: departments, isLoading } = useQuery('departments', async () => {
     const res = await api.get('/departments');
@@ -1196,7 +1477,8 @@ const DepartmentsManagement = () => {
         queryClient.invalidateQueries('departments');
       },
       onError: (error: any) => {
-        toast.error(error.response?.data?.error || 'Failed to delete department');
+        const errorMessage = error.userMessage || error.response?.data?.error || 'Failed to delete department';
+        toast.error(errorMessage);
       },
     }
   );
@@ -1277,9 +1559,16 @@ const DepartmentsManagement = () => {
                     </button>
                     <button
                       onClick={() => {
-                        if (window.confirm('Are you sure you want to delete this department?')) {
-                          deleteMutation.mutate(dept.id);
-                        }
+                        setConfirmDialog({
+                          isOpen: true,
+                          title: 'Delete Department',
+                          message: `Are you sure you want to permanently delete "${dept.name}"? This action cannot be undone. Employees in this department will have their department unassigned.`,
+                          type: 'danger',
+                          onConfirm: () => {
+                            deleteMutation.mutate(dept.id);
+                            setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+                          },
+                        });
                       }}
                       className="text-red-600 hover:text-red-900"
                     >
@@ -1331,7 +1620,8 @@ const DepartmentModal = ({ department, onClose }: { department: any; onClose: ()
         onClose();
       },
       onError: (error: any) => {
-        toast.error(error.response?.data?.error || 'Failed to create department');
+        const errorMessage = error.userMessage || error.response?.data?.error || 'Failed to create department';
+        toast.error(errorMessage);
       },
     }
   );
@@ -1348,7 +1638,8 @@ const DepartmentModal = ({ department, onClose }: { department: any; onClose: ()
         onClose();
       },
       onError: (error: any) => {
-        toast.error(error.response?.data?.error || 'Failed to update department');
+        const errorMessage = error.userMessage || error.response?.data?.error || 'Failed to update department';
+        toast.error(errorMessage);
       },
     }
   );
@@ -1432,6 +1723,19 @@ const StagesManagement = () => {
   const [editingStage, setEditingStage] = useState<any>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const queryClient = useQueryClient();
+  const [confirmDialog, setConfirmDialog] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    type: 'danger' | 'warning' | 'info' | 'success';
+    onConfirm: () => void;
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    type: 'warning',
+    onConfirm: () => {},
+  });
 
   const { data: stages, isLoading } = useQuery('stages', async () => {
     const res = await api.get('/stages');
@@ -1448,7 +1752,8 @@ const StagesManagement = () => {
         queryClient.invalidateQueries('stages');
       },
       onError: (error: any) => {
-        toast.error(error.response?.data?.error || 'Failed to delete stage');
+        const errorMessage = error.userMessage || error.response?.data?.error || 'Failed to delete stage';
+        toast.error(errorMessage);
       },
     }
   );
@@ -1536,9 +1841,16 @@ const StagesManagement = () => {
                     </button>
                     <button
                       onClick={() => {
-                        if (window.confirm('Are you sure you want to delete this stage?')) {
-                          deleteMutation.mutate(stage.id);
-                        }
+                        setConfirmDialog({
+                          isOpen: true,
+                          title: 'Delete Stage',
+                          message: `Are you sure you want to permanently delete "${stage.name}"? This action cannot be undone. Projects using this stage will need to be updated.`,
+                          type: 'danger',
+                          onConfirm: () => {
+                            deleteMutation.mutate(stage.id);
+                            setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+                          },
+                        });
                       }}
                       className="text-red-600 hover:text-red-900"
                     >
@@ -1587,7 +1899,8 @@ const StageModal = ({ stage, onClose }: { stage: any; onClose: () => void }) => 
         onClose();
       },
       onError: (error: any) => {
-        toast.error(error.response?.data?.error || 'Failed to create stage');
+        const errorMessage = error.userMessage || error.response?.data?.error || 'Failed to create stage';
+        toast.error(errorMessage);
       },
     }
   );
@@ -1604,7 +1917,8 @@ const StageModal = ({ stage, onClose }: { stage: any; onClose: () => void }) => 
         onClose();
       },
       onError: (error: any) => {
-        toast.error(error.response?.data?.error || 'Failed to update stage');
+        const errorMessage = error.userMessage || error.response?.data?.error || 'Failed to update stage';
+        toast.error(errorMessage);
       },
     }
   );

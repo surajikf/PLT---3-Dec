@@ -6,6 +6,8 @@ import {
   updateTimesheet,
   approveTimesheet,
   rejectTimesheet,
+  bulkApproveTimesheets,
+  bulkRejectTimesheets,
 } from '../controllers/timesheetController';
 import { authenticate, authorize } from '../middleware/auth';
 import { validate } from '../middleware/validate';
@@ -27,6 +29,8 @@ router.post(
 router.patch('/:id', updateTimesheet);
 router.post('/:id/approve', authorize('SUPER_ADMIN', 'ADMIN', 'PROJECT_MANAGER'), approveTimesheet);
 router.post('/:id/reject', authorize('SUPER_ADMIN', 'ADMIN', 'PROJECT_MANAGER'), rejectTimesheet);
+router.post('/bulk/approve', authorize('SUPER_ADMIN', 'ADMIN', 'PROJECT_MANAGER'), bulkApproveTimesheets);
+router.post('/bulk/reject', authorize('SUPER_ADMIN', 'ADMIN', 'PROJECT_MANAGER'), bulkRejectTimesheets);
 
 export default router;
 

@@ -37,11 +37,13 @@ import {
 } from 'recharts';
 import { format, subDays, eachDayOfInterval, isValid, parseISO, startOfWeek } from 'date-fns';
 import toast from 'react-hot-toast';
+import { UserRole } from '../utils/roles';
 
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#f97316'];
 
 const DashboardPage = () => {
   const user = authService.getCurrentUser();
+  const isEmployee = user?.role === UserRole.TEAM_MEMBER;
 
   // Fetch all data with error handling
   const { 
@@ -54,7 +56,8 @@ const DashboardPage = () => {
     return res.data.data || [];
   }, {
     onError: (error: any) => {
-      toast.error(error.response?.data?.error || 'Failed to load projects');
+      const errorMessage = error.userMessage || error.response?.data?.error || 'Failed to load projects';
+      toast.error(errorMessage);
     },
     retry: 2,
     refetchOnWindowFocus: false
@@ -70,22 +73,31 @@ const DashboardPage = () => {
     return res.data.data || [];
   }, {
     onError: (error: any) => {
-      toast.error(error.response?.data?.error || 'Failed to load timesheets');
+      const errorMessage = error.userMessage || error.response?.data?.error || 'Failed to load timesheets';
+      toast.error(errorMessage);
     },
     retry: 2,
     refetchOnWindowFocus: false
   });
 
+  // Only fetch users if user is admin (to avoid 403 errors)
+  const canViewUsers = user && ['SUPER_ADMIN', 'ADMIN'].includes(user.role);
+  
   const { 
     data: allUsers
   } = useQuery('all-users', async () => {
     const res = await api.get('/users');
     return res.data.data || [];
   }, {
-    onError: () => {
+    enabled: !!canViewUsers, // Only fetch if user has permission
+    onError: (error: any) => {
       // Silently fail for users as it's not critical for dashboard
+      // Don't log 403 errors as they're expected for non-admin users
+      if (error.response?.status !== 403 && process.env.NODE_ENV === 'development') {
+        console.error('Failed to load users:', error);
+      }
     },
-    retry: 1,
+    retry: false, // Don't retry on permission errors
     refetchOnWindowFocus: false
   });
 
@@ -98,13 +110,33 @@ const DashboardPage = () => {
     const safeTimesheets = Array.isArray(allTimesheets) ? allTimesheets : [];
     const safeUsers = Array.isArray(allUsers) ? allUsers : [];
 
-    const totalProjects = safeProjects.length;
-    const activeProjects = safeProjects.filter((p: any) => p?.status === 'IN_PROGRESS').length;
-    const completedProjects = safeProjects.filter((p: any) => p?.status === 'COMPLETED').length;
+    // For employees, filter to only their assigned projects and own timesheets
+    const employeeId = isEmployee ? user?.id : null;
+    
+    // Filter projects for employees - only show projects they're assigned to
+    // Backend should already filter, but add frontend filter as safety measure
+    const filteredProjects = isEmployee && employeeId
+      ? safeProjects.filter((p: any) => {
+          // Check if project has members relation and user is in it
+          if (p?.members && Array.isArray(p.members)) {
+            return p.members.some((m: any) => m?.userId === employeeId || m?.user?.id === employeeId);
+          }
+          // If members relation not included, trust backend filtering (backend should have filtered)
+          return true;
+        })
+      : safeProjects;
+    
+    const filteredTimesheets = isEmployee 
+      ? safeTimesheets.filter((ts: any) => ts?.user?.id === employeeId || ts?.userId === employeeId)
+      : safeTimesheets;
+
+    const totalProjects = filteredProjects.length;
+    const activeProjects = filteredProjects.filter((p: any) => p?.status === 'IN_PROGRESS').length;
+    const completedProjects = filteredProjects.filter((p: any) => p?.status === 'COMPLETED').length;
     const totalUsers = safeUsers.length;
     
-    const approvedTimesheets = safeTimesheets.filter((ts: any) => ts?.status === 'APPROVED');
-    const pendingTimesheets = safeTimesheets.filter((ts: any) => ts?.status === 'SUBMITTED').length;
+    const approvedTimesheets = filteredTimesheets.filter((ts: any) => ts?.status === 'APPROVED');
+    const pendingTimesheets = filteredTimesheets.filter((ts: any) => ts?.status === 'SUBMITTED').length;
     
     // Calculate total hours and cost
     const totalHours = approvedTimesheets.reduce((sum: number, ts: any) => {
@@ -177,28 +209,33 @@ const DashboardPage = () => {
       insights.push({
         type: 'warning',
         icon: AlertCircle,
-        message: `${pendingTimesheets} timesheet${pendingTimesheets > 1 ? 's' : ''} pending approval`,
+        message: isEmployee 
+          ? `You have ${pendingTimesheets} timesheet${pendingTimesheets > 1 ? 's' : ''} pending approval`
+          : `${pendingTimesheets} timesheet${pendingTimesheets > 1 ? 's' : ''} pending approval`,
         action: 'Review Now',
         link: '/timesheets'
       });
     }
 
-    const projectsWithAlerts = safeProjects.filter((p: any) => {
-      const budget = Number(p?.budget);
-      if (isNaN(budget) || budget === 0) return false;
-      const spent = Number(p?.totalCost) || 0;
-      const utilization = budget > 0 ? (spent / budget) * 100 : 0;
-      return utilization >= 90;
-    });
-
-    if (projectsWithAlerts.length > 0) {
-      insights.push({
-        type: 'danger',
-        icon: AlertTriangle,
-        message: `${projectsWithAlerts.length} project${projectsWithAlerts.length > 1 ? 's' : ''} approaching budget limit`,
-        action: 'View Details',
-        link: '/projects'
+    // Budget alerts - Admin only
+    if (!isEmployee) {
+      const projectsWithAlerts = filteredProjects.filter((p: any) => {
+        const budget = Number(p?.budget);
+        if (isNaN(budget) || budget === 0) return false;
+        const spent = Number(p?.totalCost) || 0;
+        const utilization = budget > 0 ? (spent / budget) * 100 : 0;
+        return utilization >= 90;
       });
+
+      if (projectsWithAlerts.length > 0) {
+        insights.push({
+          type: 'danger',
+          icon: AlertTriangle,
+          message: `${projectsWithAlerts.length} project${projectsWithAlerts.length > 1 ? 's' : ''} approaching budget limit`,
+          action: 'View Details',
+          link: '/projects'
+        });
+      }
     }
 
     if (hoursTrend < -10 && thisWeekHours > 0) {
@@ -234,30 +271,56 @@ const DashboardPage = () => {
       avgHoursPerDay,
       avgHourlyRate,
       completionRate,
-      insights
+      insights,
+      filteredProjects // Include filtered projects for use in charts
     };
-  }, [allProjects, allTimesheets, allUsers]);
+  }, [allProjects, allTimesheets, allUsers, isEmployee, user?.id]);
 
   // Memoized chart data for performance
   const chartData = useMemo(() => {
-    const safeProjects = Array.isArray(allProjects) ? allProjects : [];
+    // Use filtered projects from dashboardData for employees
+    const safeProjects = isEmployee && dashboardData.filteredProjects 
+      ? dashboardData.filteredProjects 
+      : (Array.isArray(allProjects) ? allProjects : []);
     const safeTimesheets = Array.isArray(allTimesheets) ? allTimesheets : [];
-    const approvedTimesheets = safeTimesheets.filter((ts: any) => ts?.status === 'APPROVED');
+    
+    // For employees, filter to only their own data
+    const employeeId = isEmployee ? user?.id : null;
+    const filteredTimesheets = isEmployee 
+      ? safeTimesheets.filter((ts: any) => ts?.user?.id === employeeId || ts?.userId === employeeId)
+      : safeTimesheets;
+    
+    // Pre-filter by status to avoid multiple iterations
+    const projectsByStatus = {
+      IN_PROGRESS: safeProjects.filter((p: any) => p?.status === 'IN_PROGRESS'),
+      COMPLETED: safeProjects.filter((p: any) => p?.status === 'COMPLETED'),
+      ON_HOLD: safeProjects.filter((p: any) => p?.status === 'ON_HOLD'),
+      PLANNING: safeProjects.filter((p: any) => p?.status === 'PLANNING'),
+    };
+    
+    const timesheetsByStatus = {
+      APPROVED: filteredTimesheets.filter((ts: any) => ts?.status === 'APPROVED'),
+      SUBMITTED: filteredTimesheets.filter((ts: any) => ts?.status === 'SUBMITTED'),
+      DRAFT: filteredTimesheets.filter((ts: any) => ts?.status === 'DRAFT'),
+      REJECTED: filteredTimesheets.filter((ts: any) => ts?.status === 'REJECTED'),
+    };
+    
+    const approvedTimesheets = timesheetsByStatus.APPROVED;
 
     // Project Status Distribution
     const projectStatusData = [
-      { name: 'In Progress', value: safeProjects.filter((p: any) => p?.status === 'IN_PROGRESS').length },
-      { name: 'Completed', value: safeProjects.filter((p: any) => p?.status === 'COMPLETED').length },
-      { name: 'On Hold', value: safeProjects.filter((p: any) => p?.status === 'ON_HOLD').length },
-      { name: 'Planning', value: safeProjects.filter((p: any) => p?.status === 'PLANNING').length },
+      { name: 'In Progress', value: projectsByStatus.IN_PROGRESS.length },
+      { name: 'Completed', value: projectsByStatus.COMPLETED.length },
+      { name: 'On Hold', value: projectsByStatus.ON_HOLD.length },
+      { name: 'Planning', value: projectsByStatus.PLANNING.length },
     ].filter(item => item.value > 0);
 
     // Timesheet Status Distribution
     const timesheetStatusData = [
-      { name: 'Approved', value: safeTimesheets.filter((ts: any) => ts?.status === 'APPROVED').length },
-      { name: 'Submitted', value: safeTimesheets.filter((ts: any) => ts?.status === 'SUBMITTED').length },
-      { name: 'Draft', value: safeTimesheets.filter((ts: any) => ts?.status === 'DRAFT').length },
-      { name: 'Rejected', value: safeTimesheets.filter((ts: any) => ts?.status === 'REJECTED').length },
+      { name: 'Approved', value: timesheetsByStatus.APPROVED.length },
+      { name: 'Submitted', value: timesheetsByStatus.SUBMITTED.length },
+      { name: 'Draft', value: timesheetsByStatus.DRAFT.length },
+      { name: 'Rejected', value: timesheetsByStatus.REJECTED.length },
     ].filter(item => item.value > 0);
 
     // Hours logged over last 7 days with safe date handling
@@ -304,8 +367,8 @@ const DashboardPage = () => {
       .sort((a, b) => b.hours - a.hours)
       .slice(0, 5);
 
-    // Budget Utilization with safe calculations
-    const budgetData = safeProjects
+    // Budget Utilization with safe calculations - Admin only
+    const budgetData = !isEmployee ? safeProjects
       .filter((p: any) => {
         const budget = Number(p?.budget);
         return !isNaN(budget) && budget > 0;
@@ -327,7 +390,7 @@ const DashboardPage = () => {
           utilization: Math.min(Math.max(utilization, 0), 100)
         };
       })
-      .slice(0, 6);
+      .slice(0, 6) : [];
 
     return {
       projectStatusData,
@@ -336,89 +399,332 @@ const DashboardPage = () => {
       topProjectsByHours,
       budgetData
     };
-  }, [allProjects, allTimesheets]);
+  }, [allProjects, allTimesheets, isEmployee, user?.id, dashboardData.filteredProjects]);
 
   const stats = useMemo(() => {
     const hoursTrendValue = Math.abs(dashboardData.hoursTrend || 0);
     const hoursTrendDirection = dashboardData.hoursTrend >= 0 ? 'up' : 'down';
+    const userRole = user?.role;
+    const isSuperAdmin = userRole === UserRole.SUPER_ADMIN;
+    const isAdmin = userRole === UserRole.ADMIN;
+    const isProjectManager = userRole === UserRole.PROJECT_MANAGER;
+    const isClient = userRole === UserRole.CLIENT;
     
-    return [
-      {
-        name: 'Total Projects',
-        value: dashboardData.totalProjects,
-        icon: FolderKanban,
-        color: 'text-blue-600',
-        bgColor: 'bg-gradient-to-br from-blue-50 to-blue-100',
-        borderColor: 'border-blue-200',
-        change: null,
-        changeType: 'neutral',
-        trend: null,
-        description: `${dashboardData.activeProjects} active, ${dashboardData.completedProjects} completed`
-      },
-      {
-        name: 'Active Projects',
-        value: dashboardData.activeProjects,
-        icon: Activity,
-        color: 'text-green-600',
-        bgColor: 'bg-gradient-to-br from-green-50 to-green-100',
-        borderColor: 'border-green-200',
-        change: null,
-        changeType: 'neutral',
-        trend: null,
-        description: `${dashboardData.completionRate.toFixed(1)}% completion rate`
-      },
-      {
-        name: 'Total Hours',
-        value: dashboardData.totalHours.toFixed(0),
-        icon: Clock,
-        color: 'text-purple-600',
-        bgColor: 'bg-gradient-to-br from-purple-50 to-purple-100',
-        borderColor: 'border-purple-200',
-        change: dashboardData.hoursTrend !== null ? `${hoursTrendValue.toFixed(1)}% ${hoursTrendDirection === 'up' ? '↑' : '↓'}` : null,
-        changeType: dashboardData.hoursTrend >= 0 ? 'positive' : 'negative',
-        trend: dashboardData.hoursTrend,
-        description: `${dashboardData.avgHoursPerDay.toFixed(1)}h avg/day this week`
-      },
-      {
-        name: 'Total Cost',
-        value: formatCurrency(dashboardData.totalCost, { maximumFractionDigits: 0 }),
-        icon: RupeeIcon,
-        color: 'text-emerald-600',
-        bgColor: 'bg-gradient-to-br from-emerald-50 to-emerald-100',
-        borderColor: 'border-emerald-200',
-        change: dashboardData.avgHourlyRate > 0 ? `₹${dashboardData.avgHourlyRate.toFixed(0)}/hr avg` : null,
-        changeType: 'neutral',
-        trend: null,
-        description: 'Based on approved timesheets'
-      },
-      {
-        name: 'Pending Timesheets',
-        value: dashboardData.pendingTimesheets,
-        icon: AlertCircle,
-        color: dashboardData.pendingTimesheets > 0 ? 'text-yellow-600' : 'text-green-600',
-        bgColor: dashboardData.pendingTimesheets > 0 
-          ? 'bg-gradient-to-br from-yellow-50 to-yellow-100' 
-          : 'bg-gradient-to-br from-green-50 to-green-100',
-        borderColor: dashboardData.pendingTimesheets > 0 ? 'border-yellow-200' : 'border-green-200',
-        change: dashboardData.pendingTimesheets > 0 ? 'Action needed' : 'All clear',
-        changeType: dashboardData.pendingTimesheets > 0 ? 'warning' : 'positive',
-        trend: null,
-        description: dashboardData.pendingTimesheets > 0 ? 'Requires review' : 'Everything approved'
-      },
-      {
-        name: 'Total Users',
-        value: dashboardData.totalUsers,
-        icon: Users,
-        color: 'text-indigo-600',
-        bgColor: 'bg-gradient-to-br from-indigo-50 to-indigo-100',
-        borderColor: 'border-indigo-200',
-        change: null,
-        changeType: 'neutral',
-        trend: null,
-        description: 'Team members'
-      },
-    ];
-  }, [dashboardData]);
+    // Base stats for all users
+    const baseStats: any[] = [];
+    
+    // TEAM_MEMBER (Employee) - Personal focused stats
+    if (isEmployee) {
+      baseStats.push(
+        {
+          name: 'My Projects',
+          value: dashboardData.totalProjects,
+          icon: FolderKanban,
+          color: 'text-blue-600',
+          bgColor: 'bg-gradient-to-br from-blue-50 to-blue-100',
+          borderColor: 'border-blue-200',
+          change: null,
+          changeType: 'neutral',
+          trend: null,
+          description: `${dashboardData.activeProjects} active`
+        },
+        {
+          name: 'My Total Hours',
+          value: dashboardData.totalHours.toFixed(0),
+          icon: Clock,
+          color: 'text-purple-600',
+          bgColor: 'bg-gradient-to-br from-purple-50 to-purple-100',
+          borderColor: 'border-purple-200',
+          change: dashboardData.hoursTrend !== null ? `${hoursTrendValue.toFixed(1)}% ${hoursTrendDirection === 'up' ? '↑' : '↓'}` : null,
+          changeType: dashboardData.hoursTrend >= 0 ? 'positive' : 'negative',
+          trend: dashboardData.hoursTrend,
+          description: `${dashboardData.avgHoursPerDay.toFixed(1)}h avg/day`
+        },
+        {
+          name: 'My Pending Timesheets',
+          value: dashboardData.pendingTimesheets,
+          icon: AlertCircle,
+          color: dashboardData.pendingTimesheets > 0 ? 'text-yellow-600' : 'text-green-600',
+          bgColor: dashboardData.pendingTimesheets > 0 
+            ? 'bg-gradient-to-br from-yellow-50 to-yellow-100' 
+            : 'bg-gradient-to-br from-green-50 to-green-100',
+          borderColor: dashboardData.pendingTimesheets > 0 ? 'border-yellow-200' : 'border-green-200',
+          change: dashboardData.pendingTimesheets > 0 ? 'Action needed' : 'All clear',
+          changeType: dashboardData.pendingTimesheets > 0 ? 'warning' : 'positive',
+          trend: null,
+          description: dashboardData.pendingTimesheets > 0 ? 'Awaiting approval' : 'Everything approved'
+        },
+        {
+          name: 'My Active Projects',
+          value: dashboardData.activeProjects,
+          icon: Activity,
+          color: 'text-green-600',
+          bgColor: 'bg-gradient-to-br from-green-50 to-green-100',
+          borderColor: 'border-green-200',
+          change: null,
+          changeType: 'neutral',
+          trend: null,
+          description: 'Projects I\'m working on'
+        }
+      );
+    }
+    // CLIENT - Limited view
+    else if (isClient) {
+      baseStats.push(
+        {
+          name: 'Total Projects',
+          value: dashboardData.totalProjects,
+          icon: FolderKanban,
+          color: 'text-blue-600',
+          bgColor: 'bg-gradient-to-br from-blue-50 to-blue-100',
+          borderColor: 'border-blue-200',
+          change: null,
+          changeType: 'neutral',
+          trend: null,
+          description: `${dashboardData.activeProjects} active`
+        },
+        {
+          name: 'Active Projects',
+          value: dashboardData.activeProjects,
+          icon: Activity,
+          color: 'text-green-600',
+          bgColor: 'bg-gradient-to-br from-green-50 to-green-100',
+          borderColor: 'border-green-200',
+          change: null,
+          changeType: 'neutral',
+          trend: null,
+          description: 'In progress'
+        }
+      );
+    }
+    // PROJECT_MANAGER - Project focused
+    else if (isProjectManager) {
+      baseStats.push(
+        {
+          name: 'My Projects',
+          value: dashboardData.totalProjects,
+          icon: FolderKanban,
+          color: 'text-blue-600',
+          bgColor: 'bg-gradient-to-br from-blue-50 to-blue-100',
+          borderColor: 'border-blue-200',
+          change: null,
+          changeType: 'neutral',
+          trend: null,
+          description: `${dashboardData.activeProjects} active, ${dashboardData.completedProjects} completed`
+        },
+        {
+          name: 'Active Projects',
+          value: dashboardData.activeProjects,
+          icon: Activity,
+          color: 'text-green-600',
+          bgColor: 'bg-gradient-to-br from-green-50 to-green-100',
+          borderColor: 'border-green-200',
+          change: null,
+          changeType: 'neutral',
+          trend: null,
+          description: `${dashboardData.completionRate.toFixed(1)}% completion rate`
+        },
+        {
+          name: 'Total Hours',
+          value: dashboardData.totalHours.toFixed(0),
+          icon: Clock,
+          color: 'text-purple-600',
+          bgColor: 'bg-gradient-to-br from-purple-50 to-purple-100',
+          borderColor: 'border-purple-200',
+          change: dashboardData.hoursTrend !== null ? `${hoursTrendValue.toFixed(1)}% ${hoursTrendDirection === 'up' ? '↑' : '↓'}` : null,
+          changeType: dashboardData.hoursTrend >= 0 ? 'positive' : 'negative',
+          trend: dashboardData.hoursTrend,
+          description: `${dashboardData.avgHoursPerDay.toFixed(1)}h avg/day this week`
+        },
+        {
+          name: 'Pending Timesheets',
+          value: dashboardData.pendingTimesheets,
+          icon: AlertCircle,
+          color: dashboardData.pendingTimesheets > 0 ? 'text-yellow-600' : 'text-green-600',
+          bgColor: dashboardData.pendingTimesheets > 0 
+            ? 'bg-gradient-to-br from-yellow-50 to-yellow-100' 
+            : 'bg-gradient-to-br from-green-50 to-green-100',
+          borderColor: dashboardData.pendingTimesheets > 0 ? 'border-yellow-200' : 'border-green-200',
+          change: dashboardData.pendingTimesheets > 0 ? 'Action needed' : 'All clear',
+          changeType: dashboardData.pendingTimesheets > 0 ? 'warning' : 'positive',
+          trend: null,
+          description: dashboardData.pendingTimesheets > 0 ? 'Awaiting approval' : 'Everything approved'
+        },
+        {
+          name: 'Total Cost',
+          value: formatCurrency(dashboardData.totalCost, { maximumFractionDigits: 0 }),
+          icon: RupeeIcon,
+          color: 'text-emerald-600',
+          bgColor: 'bg-gradient-to-br from-emerald-50 to-emerald-100',
+          borderColor: 'border-emerald-200',
+          change: dashboardData.avgHourlyRate > 0 ? `₹${dashboardData.avgHourlyRate.toFixed(0)}/hr avg` : null,
+          changeType: 'neutral',
+          trend: null,
+          description: 'Based on approved timesheets'
+        }
+      );
+    }
+    // ADMIN - Management focused
+    else if (isAdmin) {
+      baseStats.push(
+        {
+          name: 'Total Projects',
+          value: dashboardData.totalProjects,
+          icon: FolderKanban,
+          color: 'text-blue-600',
+          bgColor: 'bg-gradient-to-br from-blue-50 to-blue-100',
+          borderColor: 'border-blue-200',
+          change: null,
+          changeType: 'neutral',
+          trend: null,
+          description: `${dashboardData.activeProjects} active, ${dashboardData.completedProjects} completed`
+        },
+        {
+          name: 'Active Projects',
+          value: dashboardData.activeProjects,
+          icon: Activity,
+          color: 'text-green-600',
+          bgColor: 'bg-gradient-to-br from-green-50 to-green-100',
+          borderColor: 'border-green-200',
+          change: null,
+          changeType: 'neutral',
+          trend: null,
+          description: `${dashboardData.completionRate.toFixed(1)}% completion rate`
+        },
+        {
+          name: 'Total Hours',
+          value: dashboardData.totalHours.toFixed(0),
+          icon: Clock,
+          color: 'text-purple-600',
+          bgColor: 'bg-gradient-to-br from-purple-50 to-purple-100',
+          borderColor: 'border-purple-200',
+          change: dashboardData.hoursTrend !== null ? `${hoursTrendValue.toFixed(1)}% ${hoursTrendDirection === 'up' ? '↑' : '↓'}` : null,
+          changeType: dashboardData.hoursTrend >= 0 ? 'positive' : 'negative',
+          trend: dashboardData.hoursTrend,
+          description: `${dashboardData.avgHoursPerDay.toFixed(1)}h avg/day this week`
+        },
+        {
+          name: 'Pending Timesheets',
+          value: dashboardData.pendingTimesheets,
+          icon: AlertCircle,
+          color: dashboardData.pendingTimesheets > 0 ? 'text-yellow-600' : 'text-green-600',
+          bgColor: dashboardData.pendingTimesheets > 0 
+            ? 'bg-gradient-to-br from-yellow-50 to-yellow-100' 
+            : 'bg-gradient-to-br from-green-50 to-green-100',
+          borderColor: dashboardData.pendingTimesheets > 0 ? 'border-yellow-200' : 'border-green-200',
+          change: dashboardData.pendingTimesheets > 0 ? 'Action needed' : 'All clear',
+          changeType: dashboardData.pendingTimesheets > 0 ? 'warning' : 'positive',
+          trend: null,
+          description: dashboardData.pendingTimesheets > 0 ? 'Awaiting approval' : 'Everything approved'
+        },
+        {
+          name: 'Total Cost',
+          value: formatCurrency(dashboardData.totalCost, { maximumFractionDigits: 0 }),
+          icon: RupeeIcon,
+          color: 'text-emerald-600',
+          bgColor: 'bg-gradient-to-br from-emerald-50 to-emerald-100',
+          borderColor: 'border-emerald-200',
+          change: dashboardData.avgHourlyRate > 0 ? `₹${dashboardData.avgHourlyRate.toFixed(0)}/hr avg` : null,
+          changeType: 'neutral',
+          trend: null,
+          description: 'Based on approved timesheets'
+        },
+        {
+          name: 'Total Employees',
+          value: dashboardData.totalUsers,
+          icon: Users,
+          color: 'text-indigo-600',
+          bgColor: 'bg-gradient-to-br from-indigo-50 to-indigo-100',
+          borderColor: 'border-indigo-200',
+          change: null,
+          changeType: 'neutral',
+          trend: null,
+          description: 'Active employees'
+        }
+      );
+    }
+    // SUPER_ADMIN - Full access
+    else if (isSuperAdmin) {
+      baseStats.push(
+        {
+          name: 'Total Projects',
+          value: dashboardData.totalProjects,
+          icon: FolderKanban,
+          color: 'text-blue-600',
+          bgColor: 'bg-gradient-to-br from-blue-50 to-blue-100',
+          borderColor: 'border-blue-200',
+          change: null,
+          changeType: 'neutral',
+          trend: null,
+          description: `${dashboardData.activeProjects} active, ${dashboardData.completedProjects} completed`
+        },
+        {
+          name: 'Active Projects',
+          value: dashboardData.activeProjects,
+          icon: Activity,
+          color: 'text-green-600',
+          bgColor: 'bg-gradient-to-br from-green-50 to-green-100',
+          borderColor: 'border-green-200',
+          change: null,
+          changeType: 'neutral',
+          trend: null,
+          description: `${dashboardData.completionRate.toFixed(1)}% completion rate`
+        },
+        {
+          name: 'Total Hours',
+          value: dashboardData.totalHours.toFixed(0),
+          icon: Clock,
+          color: 'text-purple-600',
+          bgColor: 'bg-gradient-to-br from-purple-50 to-purple-100',
+          borderColor: 'border-purple-200',
+          change: dashboardData.hoursTrend !== null ? `${hoursTrendValue.toFixed(1)}% ${hoursTrendDirection === 'up' ? '↑' : '↓'}` : null,
+          changeType: dashboardData.hoursTrend >= 0 ? 'positive' : 'negative',
+          trend: dashboardData.hoursTrend,
+          description: `${dashboardData.avgHoursPerDay.toFixed(1)}h avg/day this week`
+        },
+        {
+          name: 'Pending Timesheets',
+          value: dashboardData.pendingTimesheets,
+          icon: AlertCircle,
+          color: dashboardData.pendingTimesheets > 0 ? 'text-yellow-600' : 'text-green-600',
+          bgColor: dashboardData.pendingTimesheets > 0 
+            ? 'bg-gradient-to-br from-yellow-50 to-yellow-100' 
+            : 'bg-gradient-to-br from-green-50 to-green-100',
+          borderColor: dashboardData.pendingTimesheets > 0 ? 'border-yellow-200' : 'border-green-200',
+          change: dashboardData.pendingTimesheets > 0 ? 'Action needed' : 'All clear',
+          changeType: dashboardData.pendingTimesheets > 0 ? 'warning' : 'positive',
+          trend: null,
+          description: dashboardData.pendingTimesheets > 0 ? 'Awaiting approval' : 'Everything approved'
+        },
+        {
+          name: 'Total Cost',
+          value: formatCurrency(dashboardData.totalCost, { maximumFractionDigits: 0 }),
+          icon: RupeeIcon,
+          color: 'text-emerald-600',
+          bgColor: 'bg-gradient-to-br from-emerald-50 to-emerald-100',
+          borderColor: 'border-emerald-200',
+          change: dashboardData.avgHourlyRate > 0 ? `₹${dashboardData.avgHourlyRate.toFixed(0)}/hr avg` : null,
+          changeType: 'neutral',
+          trend: null,
+          description: 'Based on approved timesheets'
+        },
+        {
+          name: 'Total Employees',
+          value: dashboardData.totalUsers,
+          icon: Users,
+          color: 'text-indigo-600',
+          bgColor: 'bg-gradient-to-br from-indigo-50 to-indigo-100',
+          borderColor: 'border-indigo-200',
+          change: null,
+          changeType: 'neutral',
+          trend: null,
+          description: 'All employees'
+        }
+      );
+    }
+
+    return baseStats;
+  }, [dashboardData, isEmployee, user?.role]);
 
   const handleRetry = () => {
     if (projectsError) refetchProjects();
@@ -474,14 +780,16 @@ const DashboardPage = () => {
                 <RefreshCw className={`w-4 h-4 mr-1.5 ${refreshing ? 'animate-spin' : ''}`} />
                 Refresh
               </button>
-              <Link
-                to="/reports"
-                className="inline-flex items-center px-3 py-1.5 bg-indigo-600 text-white text-sm rounded-md hover:bg-indigo-700 transition-colors font-medium"
-                aria-label="View detailed reports"
-              >
-                <BarChart3 className="w-4 h-4 mr-1.5" />
-                Reports
-              </Link>
+              {(user?.role === UserRole.SUPER_ADMIN || user?.role === UserRole.ADMIN || user?.role === UserRole.PROJECT_MANAGER) && (
+                <Link
+                  to="/reports"
+                  className="inline-flex items-center px-3 py-1.5 bg-indigo-600 text-white text-sm rounded-md hover:bg-indigo-700 transition-colors font-medium"
+                  aria-label="View detailed reports"
+                >
+                  <BarChart3 className="w-4 h-4 mr-1.5" />
+                  Reports
+                </Link>
+              )}
             </div>
           </div>
         </div>
@@ -558,8 +866,14 @@ const DashboardPage = () => {
         </div>
       )}
 
-      {/* Modern Stats Grid with Enhanced Design */}
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6" role="region" aria-label="Dashboard statistics">
+      {/* Modern Stats Grid with Enhanced Design - Role-based layout */}
+      <div className={`grid grid-cols-2 gap-4 sm:grid-cols-3 ${
+        isEmployee ? 'lg:grid-cols-4' : 
+        user?.role === UserRole.CLIENT ? 'lg:grid-cols-2' :
+        user?.role === UserRole.PROJECT_MANAGER ? 'lg:grid-cols-5' :
+        user?.role === UserRole.ADMIN ? 'lg:grid-cols-6' :
+        'lg:grid-cols-6'
+      }`} role="region" aria-label="Dashboard statistics">
         {stats.map((stat) => {
           const Icon = stat.icon;
           return (
@@ -611,12 +925,17 @@ const DashboardPage = () => {
         })}
       </div>
 
-      {/* All Charts in One Row */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+      {/* All Charts - Role-based layout */}
+      <div className={`grid grid-cols-1 gap-4 sm:grid-cols-2 ${
+        isEmployee ? 'lg:grid-cols-2 xl:grid-cols-4' : 
+        user?.role === UserRole.CLIENT ? 'lg:grid-cols-2' :
+        user?.role === UserRole.PROJECT_MANAGER ? 'lg:grid-cols-3 xl:grid-cols-4' :
+        'lg:grid-cols-3 xl:grid-cols-5'
+      }`}>
         {/* Hours Logged Over Time */}
         <div className="card">
           <div className="flex flex-col items-start mb-3">
-            <h2 className="text-sm font-bold text-gray-900 mb-1">Hours Logged</h2>
+            <h2 className="text-sm font-bold text-gray-900 mb-1">{isEmployee ? 'My Hours Logged' : 'Hours Logged'}</h2>
             <p className="text-xs text-gray-500">Last 7 Days</p>
             <Clock className="w-4 h-4 text-gray-400 mt-1" />
           </div>
@@ -664,7 +983,7 @@ const DashboardPage = () => {
         {/* Project Status Distribution */}
         <div className="card">
           <div className="flex flex-col items-start mb-3">
-            <h2 className="text-sm font-bold text-gray-900 mb-1">Project Status</h2>
+            <h2 className="text-sm font-bold text-gray-900 mb-1">{isEmployee ? 'My Project Status' : 'Project Status'}</h2>
             <FolderKanban className="w-4 h-4 text-gray-400 mt-1" />
           </div>
           {isLoading ? (
@@ -710,7 +1029,7 @@ const DashboardPage = () => {
         {/* Top Projects by Hours */}
         <div className="card">
           <div className="flex flex-col items-start mb-3">
-            <h2 className="text-sm font-bold text-gray-900 mb-1">Top Projects</h2>
+            <h2 className="text-sm font-bold text-gray-900 mb-1">{isEmployee ? 'My Top Projects' : 'Top Projects'}</h2>
             <p className="text-xs text-gray-500">By Hours</p>
             <TrendingUp className="w-4 h-4 text-gray-400 mt-1" />
           </div>
@@ -746,7 +1065,7 @@ const DashboardPage = () => {
         {/* Timesheet Status */}
         <div className="card">
           <div className="flex flex-col items-start mb-3">
-            <h2 className="text-sm font-bold text-gray-900 mb-1">Timesheet Status</h2>
+            <h2 className="text-sm font-bold text-gray-900 mb-1">{isEmployee ? 'My Timesheet Status' : 'Timesheet Status'}</h2>
             <CheckCircle2 className="w-4 h-4 text-gray-400 mt-1" />
           </div>
           {isLoading ? (
@@ -778,8 +1097,8 @@ const DashboardPage = () => {
           )}
         </div>
 
-        {/* Budget Utilization Chart */}
-        {chartData.budgetData.length > 0 ? (
+        {/* Budget Utilization Chart - Admin and Super Admin Only */}
+        {(user?.role === UserRole.SUPER_ADMIN || user?.role === UserRole.ADMIN) && chartData.budgetData.length > 0 ? (
           <div className="card">
             <div className="flex flex-col items-start mb-3">
               <h2 className="text-sm font-bold text-gray-900 mb-1">Budget Utilization</h2>
@@ -808,8 +1127,8 @@ const DashboardPage = () => {
         ) : null}
       </div>
 
-      {/* Budget Alerts */}
-      {(() => {
+      {/* Budget Alerts - Admin and Super Admin Only */}
+      {(user?.role === UserRole.SUPER_ADMIN || user?.role === UserRole.ADMIN) && (() => {
         const safeProjects = Array.isArray(allProjects) ? allProjects : [];
         const projectsWithAlerts = safeProjects.filter((p: any) => {
           const budget = Number(p?.budget);
@@ -879,7 +1198,7 @@ const DashboardPage = () => {
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <div className="card">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-xl font-bold text-gray-900">Recent Projects</h2>
+            <h2 className="text-xl font-bold text-gray-900">{isEmployee ? 'My Recent Projects' : 'Recent Projects'}</h2>
             <Link
               to="/projects"
               className="text-sm text-primary-600 hover:text-primary-700 font-medium"
@@ -891,9 +1210,18 @@ const DashboardPage = () => {
             <div className="text-gray-500" role="status" aria-label="Loading projects">
               <div className="animate-pulse">Loading projects...</div>
             </div>
-          ) : allProjects && allProjects.length > 0 ? (
-            <div className="space-y-3" role="list" aria-label="Recent projects">
-              {allProjects.slice(0, 5).map((project: any) => (
+          ) : (() => {
+            // For employees, filter to only their assigned projects
+            // Backend should already filter, but add frontend filter as safety
+            const displayProjects = isEmployee && user?.id
+              ? (dashboardData.filteredProjects || allProjects.filter((p: any) => 
+                  p?.members?.some((m: any) => m?.userId === user.id || m?.user?.id === user.id)
+                ))
+              : allProjects;
+            
+            return displayProjects && displayProjects.length > 0 ? (
+              <div className="space-y-3" role="list" aria-label="Recent projects">
+                {displayProjects.slice(0, 5).map((project: any) => (
                 <Link
                   key={project?.id}
                   to={`/projects/${project?.id}`}
@@ -921,17 +1249,18 @@ const DashboardPage = () => {
                 </Link>
               ))}
             </div>
-          ) : (
-            <div className="text-center py-8" role="status">
-              <FolderKanban className="w-12 h-12 text-gray-300 mx-auto mb-2" aria-hidden="true" />
-              <p className="text-gray-500">No projects found</p>
-            </div>
-          )}
+            ) : (
+              <div className="text-center py-8" role="status">
+                <FolderKanban className="w-12 h-12 text-gray-300 mx-auto mb-2" aria-hidden="true" />
+                <p className="text-gray-500">No projects found</p>
+              </div>
+            );
+          })()}
         </div>
 
         <div className="card">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-xl font-bold text-gray-900">Recent Timesheets</h2>
+            <h2 className="text-xl font-bold text-gray-900">{isEmployee ? 'My Recent Timesheets' : 'Recent Timesheets'}</h2>
             <Link
               to="/timesheets"
               className="text-sm text-primary-600 hover:text-primary-700 font-medium"
@@ -943,9 +1272,17 @@ const DashboardPage = () => {
             <div className="text-gray-500" role="status" aria-label="Loading timesheets">
               <div className="animate-pulse">Loading timesheets...</div>
             </div>
-          ) : allTimesheets && allTimesheets.length > 0 ? (
-            <div className="space-y-3" role="list" aria-label="Recent timesheets">
-              {allTimesheets.slice(0, 5).map((timesheet: any) => {
+          ) : (() => {
+            // For employees, filter to only their timesheets
+            const displayTimesheets = isEmployee && user?.id
+              ? allTimesheets.filter((ts: any) => 
+                  ts?.user?.id === user.id || ts?.userId === user.id
+                )
+              : allTimesheets;
+            
+            return displayTimesheets && displayTimesheets.length > 0 ? (
+              <div className="space-y-3" role="list" aria-label="Recent timesheets">
+                {displayTimesheets.slice(0, 5).map((timesheet: any) => {
                 let dateStr = 'N/A';
                 try {
                   if (timesheet?.date) {
@@ -989,12 +1326,13 @@ const DashboardPage = () => {
                 );
               })}
             </div>
-          ) : (
-            <div className="text-center py-8" role="status">
-              <Clock className="w-12 h-12 text-gray-300 mx-auto mb-2" aria-hidden="true" />
-              <p className="text-gray-500">No timesheets found</p>
-            </div>
-          )}
+            ) : (
+              <div className="text-center py-8" role="status">
+                <Clock className="w-12 h-12 text-gray-300 mx-auto mb-2" aria-hidden="true" />
+                <p className="text-gray-500">No timesheets found</p>
+              </div>
+            );
+          })()}
         </div>
       </div>
     </div>

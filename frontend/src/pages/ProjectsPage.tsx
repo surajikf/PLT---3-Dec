@@ -1,134 +1,482 @@
-import { useQuery } from 'react-query';
+import { useQuery, useMutation, useQueryClient } from 'react-query';
 import { Link } from 'react-router-dom';
 import api from '../services/api';
-import { Plus, Search } from 'lucide-react';
+import { Plus, Search, Filter, FolderKanban, Loader2, CheckSquare, Square, Trash2, MoreVertical } from 'lucide-react';
 import { useState } from 'react';
 import { authService } from '../services/authService';
 import { UserRole } from '../utils/roles';
 import { formatCurrency } from '../utils/currency';
+import Breadcrumbs from '../components/Breadcrumbs';
+import toast from 'react-hot-toast';
+import ConfirmDialog from '../components/ConfirmDialog';
+import EmptyState from '../components/EmptyState';
+import LoadingSkeleton from '../components/LoadingSkeleton';
 
 const ProjectsPage = () => {
   const user = authService.getCurrentUser();
+  const queryClient = useQueryClient();
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [showArchived, setShowArchived] = useState(false);
+  const [selectedProjects, setSelectedProjects] = useState<Set<string>>(new Set());
+  const [confirmDialog, setConfirmDialog] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    type: 'danger' | 'warning' | 'info' | 'success';
+    onConfirm: () => void;
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    type: 'warning',
+    onConfirm: () => {},
+  });
 
-  const { data, isLoading } = useQuery(
-    ['projects', search, statusFilter],
+  const { data, isLoading, error } = useQuery(
+    ['projects', search, statusFilter, showArchived],
     async () => {
       const params = new URLSearchParams();
       if (search) params.append('search', search);
       if (statusFilter) params.append('status', statusFilter);
+      if (showArchived) {
+        params.append('includeArchived', 'archived');
+      }
       const res = await api.get(`/projects?${params.toString()}`);
       return res.data.data;
+    },
+    {
+      onError: (error: any) => {
+        const errorMessage = error.userMessage || error.response?.data?.error || 'Failed to load projects';
+        toast.error(errorMessage);
+      },
+      retry: 2,
+      refetchOnWindowFocus: false,
     }
   );
 
   const canCreate = user && [UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER].includes(user.role as UserRole);
+  const canBulkEdit = user && [UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER].includes(user.role as UserRole);
+  const canBulkDelete = user && [UserRole.SUPER_ADMIN, UserRole.ADMIN].includes(user.role as UserRole);
+
+  const handleSelectAll = (checked: boolean) => {
+    if (checked) {
+      setSelectedProjects(new Set(data?.map((p: any) => p.id) || []));
+    } else {
+      setSelectedProjects(new Set());
+    }
+  };
+
+  const handleSelectProject = (id: string, checked: boolean) => {
+    const newSelected = new Set(selectedProjects);
+    if (checked) {
+      newSelected.add(id);
+    } else {
+      newSelected.delete(id);
+    }
+    setSelectedProjects(newSelected);
+  };
+
+  const bulkStatusUpdateMutation = useMutation(
+    async ({ ids, status }: { ids: string[]; status: string }) => {
+      const res = await api.post('/projects/bulk/status', { ids, status });
+      return res.data;
+    },
+    {
+      onSuccess: () => {
+        toast.success('Projects status updated successfully');
+        setSelectedProjects(new Set());
+        queryClient.invalidateQueries(['projects', search, statusFilter, showArchived]);
+      },
+      onError: (error: any) => {
+        const errorMessage = error.userMessage || error.response?.data?.error || 'Failed to update projects';
+        toast.error(errorMessage);
+      },
+    }
+  );
+
+  const bulkArchiveMutation = useMutation(
+    async (ids: string[]) => {
+      const res = await api.post('/projects/bulk/delete', { ids });
+      return res.data;
+    },
+    {
+      onSuccess: () => {
+        toast.success('Projects archived successfully');
+        setSelectedProjects(new Set());
+        queryClient.invalidateQueries(['projects', search, statusFilter, showArchived]);
+      },
+      onError: (error: any) => {
+        const errorMessage = error.userMessage || error.response?.data?.error || 'Failed to archive projects';
+        toast.error(errorMessage);
+      },
+    }
+  );
+
+  const bulkRestoreMutation = useMutation(
+    async (ids: string[]) => {
+      const res = await api.post('/projects/bulk/restore', { ids });
+      return res.data;
+    },
+    {
+      onSuccess: () => {
+        toast.success('Projects restored successfully');
+        setSelectedProjects(new Set());
+        queryClient.invalidateQueries(['projects', search, statusFilter, showArchived]);
+      },
+      onError: (error: any) => {
+        const errorMessage = error.userMessage || error.response?.data?.error || 'Failed to restore projects';
+        toast.error(errorMessage);
+      },
+    }
+  );
+
+  const handleBulkStatusChange = (status: string) => {
+    if (selectedProjects.size === 0) {
+      toast.error('Please select at least one project');
+      return;
+    }
+    if (!status) {
+      return; // Don't show dialog if no status selected
+    }
+    const statusLabel = status.replace('_', ' ');
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Change Project Status',
+      message: `Are you sure you want to change the status of ${selectedProjects.size} project(s) to "${statusLabel}"?`,
+      type: 'warning',
+      onConfirm: () => {
+        bulkStatusUpdateMutation.mutate({ ids: Array.from(selectedProjects), status });
+        setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+      },
+    });
+  };
+
+  const handleBulkArchive = () => {
+    if (selectedProjects.size === 0) {
+      toast.error('Please select at least one project');
+      return;
+    }
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Archive Projects',
+      message: `Are you sure you want to archive ${selectedProjects.size} project(s)? Archived projects will be moved to trash and can be restored later.`,
+      type: 'danger',
+      onConfirm: () => {
+        bulkArchiveMutation.mutate(Array.from(selectedProjects));
+        setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+      },
+    });
+  };
+
+  const handleBulkRestore = () => {
+    if (selectedProjects.size === 0) {
+      toast.error('Please select at least one project');
+      return;
+    }
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Restore Projects',
+      message: `Are you sure you want to restore ${selectedProjects.size} archived project(s)? They will be moved back to active projects.`,
+      type: 'info',
+      onConfirm: () => {
+        bulkRestoreMutation.mutate(Array.from(selectedProjects));
+        setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+      },
+    });
+  };
+
+  const allSelected = data && data.length > 0 && data.every((p: any) => selectedProjects.has(p.id));
+  const someSelected = selectedProjects.size > 0 && !allSelected;
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h1 className="text-3xl font-bold text-gray-900">Projects</h1>
+      {/* Breadcrumbs */}
+      <Breadcrumbs items={[{ label: 'Projects' }]} />
+
+      {/* Header Section */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold text-gray-900">Projects</h1>
+          <p className="mt-1 text-sm text-gray-500">Manage and track all your projects</p>
+        </div>
         {canCreate && (
-          <Link to="/projects/new" className="btn btn-primary inline-flex items-center">
+          <Link to="/projects/new" className="btn btn-primary inline-flex items-center justify-center whitespace-nowrap">
             <Plus className="w-5 h-5 mr-2" />
             New Project
           </Link>
         )}
       </div>
 
+      {/* Bulk Actions Toolbar */}
+      {canBulkEdit && selectedProjects.size > 0 && (
+        <div className="card bg-indigo-50 border-indigo-200">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium text-indigo-900">
+                {selectedProjects.size} project{selectedProjects.size > 1 ? 's' : ''} selected
+              </span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <div className="relative">
+                <select
+                  defaultValue=""
+                  onChange={(e) => {
+                    if (e.target.value) {
+                      handleBulkStatusChange(e.target.value);
+                      // Reset dropdown after selection
+                      setTimeout(() => {
+                        const select = e.target as HTMLSelectElement;
+                        select.value = '';
+                      }, 100);
+                    }
+                  }}
+                  className="input pr-8 text-sm"
+                  disabled={bulkStatusUpdateMutation.isLoading}
+                >
+                  <option value="">Change Status...</option>
+                  <option value="PLANNING">Planning</option>
+                  <option value="IN_PROGRESS">In Progress</option>
+                  <option value="ON_HOLD">On Hold</option>
+                  <option value="COMPLETED">Completed</option>
+                  <option value="CANCELLED">Cancelled</option>
+                </select>
+                <MoreVertical className="absolute right-2 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+              </div>
+              {canBulkDelete && !showArchived && (
+                <button
+                  onClick={handleBulkArchive}
+                  disabled={bulkArchiveMutation.isLoading}
+                  className="btn btn-warning text-sm inline-flex items-center"
+                >
+                  <Trash2 className="w-4 h-4 mr-1" />
+                  Archive ({selectedProjects.size})
+                </button>
+              )}
+              {canBulkDelete && showArchived && (
+                <button
+                  onClick={handleBulkRestore}
+                  disabled={bulkRestoreMutation.isLoading}
+                  className="btn btn-success text-sm inline-flex items-center"
+                >
+                  <CheckSquare className="w-4 h-4 mr-1" />
+                  Restore ({selectedProjects.size})
+                </button>
+              )}
+              <button
+                onClick={() => setSelectedProjects(new Set())}
+                className="btn btn-secondary text-sm"
+              >
+                Clear Selection
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Filters and Search */}
       <div className="card">
-        <div className="flex gap-4 mb-6">
+        <div className="flex flex-col sm:flex-row gap-4 mb-6">
           <div className="flex-1 relative">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5 pointer-events-none" />
             <input
               type="text"
-              placeholder="Search projects..."
-              className="input pl-10"
+              placeholder="Search by project name or code..."
+              className="input pl-10 w-full"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
           </div>
-          <select
-            className="input w-48"
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-          >
-            <option value="">All Status</option>
-            <option value="PLANNING">Planning</option>
-            <option value="IN_PROGRESS">In Progress</option>
-            <option value="ON_HOLD">On Hold</option>
-            <option value="COMPLETED">Completed</option>
-            <option value="CANCELLED">Cancelled</option>
-          </select>
+          <div className="relative sm:w-56">
+            <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5 pointer-events-none z-10" />
+            <select
+              className="input pl-10 w-full appearance-none bg-white"
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+            >
+              <option value="">All Status</option>
+              <option value="PLANNING">Planning</option>
+              <option value="IN_PROGRESS">In Progress</option>
+              <option value="ON_HOLD">On Hold</option>
+              <option value="COMPLETED">Completed</option>
+              <option value="CANCELLED">Cancelled</option>
+            </select>
+          </div>
+          {canBulkDelete && (
+            <div className="flex items-center gap-2">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={showArchived}
+                  onChange={(e) => {
+                    setShowArchived(e.target.checked);
+                    setSelectedProjects(new Set());
+                  }}
+                  className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                />
+                <span className="text-sm text-gray-700">Show Archived</span>
+              </label>
+            </div>
+          )}
         </div>
 
+        {/* Loading State */}
         {isLoading ? (
-          <p>Loading...</p>
+          <LoadingSkeleton rows={8} showHeader={false} />
+        ) : error ? (
+          <div className="text-center py-12">
+            <p className="text-red-600 mb-2 font-semibold">Failed to load projects</p>
+            <p className="text-sm text-gray-500 mb-4">
+              {error instanceof Error ? error.message : 'Please try refreshing the page'}
+            </p>
+            <button
+              onClick={() => queryClient.invalidateQueries(['projects', search, statusFilter, showArchived])}
+              className="btn btn-primary text-sm"
+            >
+              Retry
+            </button>
+          </div>
         ) : data && data.length > 0 ? (
-          <div className="overflow-x-auto">
+          <>
+            {showArchived && (
+              <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                <p className="text-sm text-yellow-800">
+                  <strong>Viewing archived projects.</strong> These projects are in trash and can be restored.
+                </p>
+              </div>
+            )}
+          <div className="overflow-x-auto -mx-6 px-6">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Project
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Customer
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Manager
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Status
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Budget
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {data.map((project: any) => (
-                  <tr key={project.id} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <Link to={`/projects/${project.id}`} className="text-primary-600 hover:text-primary-700 font-medium">
-                        {project.name}
-                      </Link>
-                      <p className="text-sm text-gray-500">{project.code}</p>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {project.customer?.name || 'N/A'}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {project.manager ? `${project.manager.firstName} ${project.manager.lastName}` : 'N/A'}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span
-                        className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                          project.status === 'IN_PROGRESS'
-                            ? 'bg-blue-100 text-blue-800'
-                            : project.status === 'COMPLETED'
-                            ? 'bg-green-100 text-green-800'
-                            : project.status === 'ON_HOLD'
-                            ? 'bg-yellow-100 text-yellow-800'
-                            : 'bg-gray-100 text-gray-800'
-                        }`}
-                      >
-                        {project.status.replace('_', ' ')}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {formatCurrency(project.budget || 0)}
-                    </td>
+                  {canBulkEdit && (
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider w-12">
+                        <input
+                          type="checkbox"
+                          checked={allSelected}
+                          ref={(input) => {
+                            if (input) input.indeterminate = someSelected;
+                          }}
+                          onChange={(e) => handleSelectAll(e.target.checked)}
+                          className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                        />
+                      </th>
+                    )}
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
+                      Project
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
+                      Customer
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
+                      Manager
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
+                      Status
+                    </th>
+                    <th className="px-4 py-3 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider">
+                      Budget
+                    </th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {data.map((project: any) => (
+                    <tr 
+                      key={project.id} 
+                      className={`hover:bg-primary-50/30 transition-colors duration-150 ${selectedProjects.has(project.id) ? 'bg-primary-50' : ''}`}
+                    >
+                      {canBulkEdit && (
+                        <td className="px-4 py-4 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={selectedProjects.has(project.id)}
+                            onChange={(e) => handleSelectProject(project.id, e.target.checked)}
+                            className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                          />
+                        </td>
+                      )}
+                      <td 
+                        className="px-4 py-4 whitespace-nowrap cursor-pointer"
+                        onClick={() => window.location.href = `/projects/${project.id}`}
+                      >
+                        <Link 
+                          to={`/projects/${project.id}`} 
+                          className="group flex items-center gap-3"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <FolderKanban className="w-5 h-5 text-gray-400 group-hover:text-primary-600 transition-colors flex-shrink-0" />
+                          <div className="min-w-0">
+                            <p className="text-sm font-semibold text-gray-900 group-hover:text-primary-600 transition-colors truncate">
+                              {project.name}
+                            </p>
+                            <p className="text-xs text-gray-500 truncate">{project.code}</p>
+                          </div>
+                        </Link>
+                      </td>
+                      <td className="px-4 py-4 whitespace-nowrap">
+                        <p className="text-sm text-gray-900">{project.customer?.name || <span className="text-gray-400 italic">No customer</span>}</p>
+                      </td>
+                      <td className="px-4 py-4 whitespace-nowrap">
+                        <p className="text-sm text-gray-900">
+                          {project.manager ? `${project.manager.firstName} ${project.manager.lastName}` : <span className="text-gray-400 italic">Unassigned</span>}
+                        </p>
+                      </td>
+                      <td className="px-4 py-4 whitespace-nowrap">
+                        <span
+                          className={`px-3 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                            project.status === 'IN_PROGRESS'
+                              ? 'bg-blue-100 text-blue-800'
+                              : project.status === 'COMPLETED'
+                              ? 'bg-green-100 text-green-800'
+                              : project.status === 'ON_HOLD'
+                              ? 'bg-yellow-100 text-yellow-800'
+                              : project.status === 'PLANNING'
+                              ? 'bg-purple-100 text-purple-800'
+                              : 'bg-gray-100 text-gray-800'
+                          }`}
+                        >
+                          {project.status.replace('_', ' ')}
+                        </span>
+                      </td>
+                      <td className="px-4 py-4 whitespace-nowrap text-right">
+                        <p className="text-sm font-medium text-gray-900">{formatCurrency(project.budget || 0)}</p>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
           </div>
+          </>
         ) : (
-          <p className="text-gray-500">No projects found</p>
+          <div className="text-center py-12">
+            <FolderKanban className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+            <h3 className="text-sm font-medium text-gray-900 mb-1">No projects found</h3>
+            <p className="text-sm text-gray-500 mb-6">
+              {search || statusFilter 
+                ? 'Try adjusting your search or filter criteria' 
+                : 'Get started by creating a new project'}
+            </p>
+            {canCreate && !search && !statusFilter && (
+              <Link to="/projects/new" className="btn btn-primary inline-flex items-center">
+                <Plus className="w-5 h-5 mr-2" />
+                Create Your First Project
+              </Link>
+            )}
+          </div>
         )}
       </div>
+
+      {/* Confirm Dialog */}
+      <ConfirmDialog
+        isOpen={confirmDialog.isOpen}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        type={confirmDialog.type}
+        confirmText={confirmDialog.type === 'danger' ? 'Yes, Archive' : confirmDialog.type === 'warning' ? 'Yes, Change Status' : 'Confirm'}
+        cancelText="Cancel"
+        onConfirm={confirmDialog.onConfirm}
+        onCancel={() => setConfirmDialog(prev => ({ ...prev, isOpen: false }))}
+      />
     </div>
   );
 };

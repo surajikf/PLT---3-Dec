@@ -10,7 +10,7 @@ export const roleLabels: Record<UserRole, string> = {
   [UserRole.SUPER_ADMIN]: 'Super Admin',
   [UserRole.ADMIN]: 'Admin',
   [UserRole.PROJECT_MANAGER]: 'Project Manager',
-  [UserRole.TEAM_MEMBER]: 'Team Member',
+  [UserRole.TEAM_MEMBER]: 'Employee',
   [UserRole.CLIENT]: 'Client',
 };
 

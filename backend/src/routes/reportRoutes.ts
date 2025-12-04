@@ -11,8 +11,8 @@ const router = Router();
 router.use(authenticate);
 
 router.get('/project', getProjectReport);
-router.get('/department', authorize('SUPER_ADMIN', 'ADMIN'), getDepartmentReport);
-router.get('/budget', authorize('SUPER_ADMIN', 'ADMIN'), getBudgetReport);
+router.get('/department', authorize('SUPER_ADMIN', 'ADMIN', 'PROJECT_MANAGER'), getDepartmentReport);
+router.get('/budget', authorize('SUPER_ADMIN', 'ADMIN', 'PROJECT_MANAGER'), getBudgetReport);
 
 export default router;
 

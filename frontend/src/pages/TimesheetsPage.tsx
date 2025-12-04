@@ -1,12 +1,13 @@
 import { useQuery, useMutation } from 'react-query';
 import api from '../services/api';
-import { Plus, Clock, Calendar, FileText, CheckCircle, XCircle } from 'lucide-react';
-import { useState, useMemo } from 'react';
+import { Plus, Clock, Calendar, FileText, CheckCircle, XCircle, Loader2, Filter, ChevronLeft, ChevronRight } from 'lucide-react';
+import { useState, useMemo, useEffect } from 'react';
 import { authService } from '../services/authService';
 import { UserRole } from '../utils/roles';
 import toast from 'react-hot-toast';
 import { formatCurrency } from '../utils/currency';
 import { format } from 'date-fns';
+import Breadcrumbs from '../components/Breadcrumbs';
 
 // Helper function to extract task name from description
 const extractTaskName = (description: string | null | undefined): string => {
@@ -55,6 +56,11 @@ const getCleanDescription = (description: string | null | undefined): string => 
 const TimesheetsPage = () => {
   const user = authService.getCurrentUser();
   const [showModal, setShowModal] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [statusFilter, setStatusFilter] = useState('');
+  const [projectFilter, setProjectFilter] = useState('');
+  const [selectedTimesheets, setSelectedTimesheets] = useState<Set<string>>(new Set());
   const [formData, setFormData] = useState({
     projectId: '',
     taskId: '',
@@ -67,19 +73,33 @@ const TimesheetsPage = () => {
   });
 
   const { data, refetch, isLoading, error } = useQuery(
-    'timesheets',
+    ['timesheets', currentPage, pageSize, statusFilter, projectFilter],
     async () => {
-      const res = await api.get('/timesheets');
-      return res.data.data || [];
+      const params = new URLSearchParams();
+      params.append('page', currentPage.toString());
+      params.append('limit', pageSize.toString());
+      if (statusFilter) params.append('status', statusFilter);
+      if (projectFilter) params.append('projectId', projectFilter);
+      const res = await api.get(`/timesheets?${params.toString()}`);
+      return {
+        data: res.data.data || [],
+        pagination: res.data.pagination || { page: 1, limit: pageSize, total: 0, pages: 1 },
+      };
     },
     {
       onError: (error: any) => {
-        console.error('Failed to fetch timesheets:', error);
+        if (process.env.NODE_ENV === 'development') {
+          console.error('Failed to fetch timesheets:', error);
+        }
         toast.error(error.response?.data?.error || 'Failed to load timesheets');
       },
       refetchOnWindowFocus: true,
+      keepPreviousData: true,
     }
   );
+
+  const timesheets = data?.data || [];
+  const paginationInfo = data?.pagination || { page: 1, limit: pageSize, total: 0, pages: 1 };
 
   const { data: projectsData } = useQuery('projects-for-timesheets', async () => {
     const res = await api.get('/projects');
@@ -114,12 +134,12 @@ const TimesheetsPage = () => {
 
   // Get hours logged for selected date (DCR - Daily Completion Report)
   const hoursForDate = useMemo(() => {
-    if (!formData.date || !data) return 0;
+    if (!formData.date || !timesheets) return 0;
     const dateStr = formData.date;
-    return data
+    return timesheets
       .filter((ts: any) => format(new Date(ts.date), 'yyyy-MM-dd') === dateStr)
       .reduce((sum: number, ts: any) => sum + (ts.hours || 0), 0);
-  }, [formData.date, data]);
+  }, [formData.date, timesheets]);
 
   const createTimesheetMutation = useMutation(
     async (payload: any) => {
@@ -140,10 +160,12 @@ const TimesheetsPage = () => {
           description: '',
           isComplete: false,
         });
+        setCurrentPage(1); // Reset to first page to see the new entry
         refetch();
       },
       onError: (error: any) => {
-        toast.error(error.response?.data?.error || 'Failed to submit timesheet');
+        const errorMessage = error.userMessage || error.response?.data?.error || 'Failed to submit timesheet';
+      toast.error(errorMessage);
       },
     }
   );
@@ -195,7 +217,8 @@ const TimesheetsPage = () => {
       toast.success('Timesheet approved');
       refetch();
     } catch (error: any) {
-      toast.error(error.response?.data?.error || 'Failed to approve timesheet');
+      const errorMessage = error.userMessage || error.response?.data?.error || 'Failed to approve timesheet';
+      toast.error(errorMessage);
     }
   };
 
@@ -207,10 +230,140 @@ const TimesheetsPage = () => {
         toast.success('Timesheet rejected');
         refetch();
       } catch (error: any) {
-        toast.error(error.response?.data?.error || 'Failed to reject timesheet');
+        const errorMessage = error.userMessage || error.response?.data?.error || 'Failed to reject timesheet';
+        toast.error(errorMessage);
       }
     }
   };
+
+  const handleSelectAll = (checked: boolean) => {
+    if (checked) {
+      // Only select submitted timesheets that can be approved/rejected
+      const selectableIds = timesheets
+        .filter((ts: any) => ts.status === 'SUBMITTED')
+        .map((ts: any) => ts.id);
+      setSelectedTimesheets(new Set(selectableIds));
+    } else {
+      setSelectedTimesheets(new Set());
+    }
+  };
+
+  const handleSelectTimesheet = (id: string, checked: boolean, status: string) => {
+    // Only allow selecting SUBMITTED timesheets
+    if (checked && status !== 'SUBMITTED') {
+      toast.error('Only submitted timesheets can be approved or rejected');
+      return;
+    }
+    
+    const newSelected = new Set(selectedTimesheets);
+    if (checked) {
+      newSelected.add(id);
+    } else {
+      newSelected.delete(id);
+    }
+    setSelectedTimesheets(newSelected);
+  };
+
+  const handleBulkApprove = async () => {
+    if (selectedTimesheets.size === 0) {
+      toast.error('Please select at least one timesheet');
+      return;
+    }
+
+    // Filter to only include SUBMITTED timesheets
+    const submittedIds = timesheets
+      .filter((ts: any) => selectedTimesheets.has(ts.id) && ts.status === 'SUBMITTED')
+      .map((ts: any) => ts.id);
+
+    if (submittedIds.length === 0) {
+      toast.error('Please select only submitted timesheets. Only submitted timesheets can be approved.');
+      // Clear selection of non-submitted timesheets
+      setSelectedTimesheets(new Set());
+      return;
+    }
+
+    // If some selected timesheets are not submitted, warn the user
+    if (submittedIds.length < selectedTimesheets.size) {
+      const nonSubmittedCount = selectedTimesheets.size - submittedIds.length;
+      toast.error(`${nonSubmittedCount} selected timesheet(s) are not in submitted status and will be skipped.`);
+    }
+
+    try {
+      const response = await api.post('/timesheets/bulk/approve', {
+        ids: submittedIds,
+      });
+      toast.success(`Successfully approved ${response.data.data.approved} timesheet(s)`);
+      setSelectedTimesheets(new Set());
+      refetch();
+    } catch (error: any) {
+      const errorMessage = error.userMessage || error.response?.data?.error || 'Failed to approve timesheets';
+      toast.error(errorMessage);
+      // Clear selection on error
+      setSelectedTimesheets(new Set());
+    }
+  };
+
+  const handleBulkReject = async () => {
+    if (selectedTimesheets.size === 0) {
+      toast.error('Please select at least one timesheet');
+      return;
+    }
+
+    // Filter to only include SUBMITTED timesheets
+    const submittedIds = timesheets
+      .filter((ts: any) => selectedTimesheets.has(ts.id) && ts.status === 'SUBMITTED')
+      .map((ts: any) => ts.id);
+
+    if (submittedIds.length === 0) {
+      toast.error('Please select only submitted timesheets. Only submitted timesheets can be rejected.');
+      // Clear selection of non-submitted timesheets
+      setSelectedTimesheets(new Set());
+      return;
+    }
+
+    // If some selected timesheets are not submitted, warn the user
+    if (submittedIds.length < selectedTimesheets.size) {
+      const nonSubmittedCount = selectedTimesheets.size - submittedIds.length;
+      toast.error(`${nonSubmittedCount} selected timesheet(s) are not in submitted status and will be skipped.`);
+    }
+
+    if (!confirm(`Are you sure you want to reject ${submittedIds.length} timesheet(s)?`)) {
+      return;
+    }
+
+    try {
+      const response = await api.post('/timesheets/bulk/reject', {
+        ids: submittedIds,
+        reason: 'Bulk rejected by manager',
+      });
+      toast.success(`Successfully rejected ${response.data.data.rejected} timesheet(s)`);
+      setSelectedTimesheets(new Set());
+      refetch();
+    } catch (error: any) {
+      const errorMessage = error.userMessage || error.response?.data?.error || 'Failed to reject timesheets';
+      toast.error(errorMessage);
+      // Clear selection on error
+      setSelectedTimesheets(new Set());
+    }
+  };
+
+  // Check if all selectable timesheets are selected
+  const selectableTimesheets = timesheets.filter((ts: any) => ts.status === 'SUBMITTED');
+  const allSelected = selectableTimesheets.length > 0 && 
+    selectableTimesheets.every((ts: any) => selectedTimesheets.has(ts.id));
+  const someSelected = selectedTimesheets.size > 0 && !allSelected;
+
+  // Clean up selection: remove any timesheets that are no longer SUBMITTED
+  // This handles cases where status changes or timesheets are filtered out
+  useEffect(() => {
+    const validSelected = timesheets
+      .filter((ts: any) => selectedTimesheets.has(ts.id) && ts.status === 'SUBMITTED')
+      .map((ts: any) => ts.id);
+    
+    if (validSelected.length !== selectedTimesheets.size) {
+      setSelectedTimesheets(new Set(validSelected));
+    }
+  }, [timesheets]);
 
   const canApprove = user && [UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER].includes(user.role as UserRole);
 
@@ -221,6 +374,9 @@ const TimesheetsPage = () => {
 
   return (
     <div className="space-y-6">
+      {/* Breadcrumbs */}
+      <Breadcrumbs items={[{ label: 'Timesheets' }]} />
+
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Timesheets</h1>
@@ -409,7 +565,8 @@ const TimesheetsPage = () => {
                   rows={4}
                   value={formData.description}
                   onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                  placeholder="Describe the work done..."
+                  placeholder="Describe the work done in detail..."
+                  title="Provide a clear description of the work completed. This helps managers understand what was accomplished."
                 />
               </div>
 
@@ -537,11 +694,101 @@ const TimesheetsPage = () => {
         </div>
       )}
 
+      {/* Bulk Actions */}
+      {canApprove && selectedTimesheets.size > 0 && (
+        <div className="card bg-primary-50 border-primary-200">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <span className="text-sm font-medium text-gray-700">
+                {selectedTimesheets.size} timesheet(s) selected
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleBulkApprove}
+                className="btn btn-primary inline-flex items-center"
+              >
+                <CheckCircle className="w-4 h-4 mr-2" />
+                Approve Selected
+              </button>
+              <button
+                onClick={handleBulkReject}
+                className="btn btn-secondary inline-flex items-center bg-red-600 hover:bg-red-700 text-white"
+              >
+                <XCircle className="w-4 h-4 mr-2" />
+                Reject Selected
+              </button>
+              <button
+                onClick={() => setSelectedTimesheets(new Set())}
+                className="btn btn-secondary"
+              >
+                Clear Selection
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Filters */}
+      <div className="card">
+        <div className="flex flex-col sm:flex-row gap-4">
+          <div className="flex-1 relative">
+            <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5 pointer-events-none z-10" />
+            <select
+              className="input pl-10 w-full appearance-none bg-white"
+              value={statusFilter}
+              onChange={(e) => {
+                setStatusFilter(e.target.value);
+                setCurrentPage(1);
+              }}
+            >
+              <option value="">All Status</option>
+              <option value="DRAFT">Draft</option>
+              <option value="SUBMITTED">Submitted</option>
+              <option value="APPROVED">Approved</option>
+              <option value="REJECTED">Rejected</option>
+            </select>
+          </div>
+          <div className="flex-1 relative">
+            <select
+              className="input w-full appearance-none bg-white"
+              value={projectFilter}
+              onChange={(e) => {
+                setProjectFilter(e.target.value);
+                setCurrentPage(1);
+              }}
+            >
+              <option value="">All Projects</option>
+              {projectsData?.map((project: any) => (
+                <option key={project.id} value={project.id}>
+                  {project.name} ({project.code})
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="relative sm:w-32">
+            <select
+              className="input w-full appearance-none bg-white"
+              value={pageSize}
+              onChange={(e) => {
+                setPageSize(Number(e.target.value));
+                setCurrentPage(1);
+              }}
+            >
+              <option value="10">10 per page</option>
+              <option value="20">20 per page</option>
+              <option value="50">50 per page</option>
+              <option value="100">100 per page</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
       {/* Timesheets List */}
       <div className="card">
         {isLoading ? (
-          <div className="text-center py-12">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto mb-4"></div>
+          <div className="flex flex-col items-center justify-center py-12">
+            <Loader2 className="w-8 h-8 animate-spin text-primary-600 mb-4" />
             <p className="text-gray-500">Loading timesheets...</p>
           </div>
         ) : error ? (
@@ -555,53 +802,92 @@ const TimesheetsPage = () => {
               Retry
             </button>
           </div>
-        ) : data && data.length > 0 ? (
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Project</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Task Name</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Description</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Hours</th>
-                  {canApprove && (
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Cost</th>
-                  )}
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                  {canApprove && (
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
-                  )}
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {data.map((timesheet: any) => (
-                  <tr key={timesheet.id} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+        ) : timesheets && timesheets.length > 0 ? (
+          <>
+            <div className="overflow-x-auto -mx-6 px-6">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    {canApprove && (
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider w-12">
+                        <input
+                          type="checkbox"
+                          checked={allSelected}
+                          ref={(input) => {
+                            if (input) input.indeterminate = someSelected;
+                          }}
+                          onChange={(e) => handleSelectAll(e.target.checked)}
+                          className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                        />
+                      </th>
+                    )}
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Date</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Employee</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Project</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Task Name</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Description</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Hours</th>
+                    {canApprove && (
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Cost</th>
+                    )}
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Status</th>
+                    {canApprove && (
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Actions</th>
+                    )}
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {timesheets.map((timesheet: any) => (
+                  <tr key={timesheet.id} className={`hover:bg-primary-50/30 transition-colors duration-150 ${selectedTimesheets.has(timesheet.id) ? 'bg-primary-50' : ''}`}>
+                    {canApprove && (
+                      <td className="px-4 py-4 whitespace-nowrap">
+                        <input
+                          type="checkbox"
+                          checked={selectedTimesheets.has(timesheet.id)}
+                          onChange={(e) => handleSelectTimesheet(timesheet.id, e.target.checked, timesheet.status)}
+                          disabled={timesheet.status !== 'SUBMITTED'}
+                          className="rounded border-gray-300 text-primary-600 focus:ring-primary-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                          title={timesheet.status !== 'SUBMITTED' ? `Only submitted timesheets can be selected. Current status: ${timesheet.status}` : 'Select timesheet'}
+                        />
+                      </td>
+                    )}
+                    <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-900">
                       {format(new Date(timesheet.date), 'MMM dd, yyyy')}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {timesheet.project?.name || 'N/A'}
+                    <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-900">
+                      <div className="flex flex-col">
+                        <span className="font-medium text-gray-900">
+                          {timesheet.user?.firstName && timesheet.user?.lastName
+                            ? `${timesheet.user.firstName} ${timesheet.user.lastName}`
+                            : timesheet.user?.email || 'N/A'}
+                        </span>
+                        {timesheet.user?.email && timesheet.user?.firstName && timesheet.user?.lastName && (
+                          <span className="text-xs text-gray-500">{timesheet.user.email}</span>
+                        )}
+                      </div>
                     </td>
-                    <td className="px-6 py-4 text-sm text-gray-900">
+                    <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {timesheet.project?.name || <span className="text-gray-400">N/A</span>}
+                    </td>
+                    <td className="px-4 py-4 text-sm text-gray-900">
                       <span className="font-medium text-gray-700">
                         {extractTaskName(timesheet.description)}
                       </span>
                     </td>
-                    <td className="px-6 py-4 text-sm text-gray-900">
+                    <td className="px-4 py-4 text-sm text-gray-900">
                       <div className="max-w-xs truncate" title={getCleanDescription(timesheet.description)}>
                         {getCleanDescription(timesheet.description)}
                       </div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                    <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-900">
                       {timesheet.hours.toFixed(2)}h
                     </td>
                     {canApprove && (
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-900">
                         {timesheet.cost ? formatCurrency(timesheet.cost, { maximumFractionDigits: 2 }) : formatCurrency(0, { maximumFractionDigits: 2 })}
                       </td>
                     )}
-                    <td className="px-6 py-4 whitespace-nowrap">
+                    <td className="px-4 py-4 whitespace-nowrap">
                       <span
                         className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
                           timesheet.status === 'APPROVED'
@@ -633,15 +919,95 @@ const TimesheetsPage = () => {
                       </td>
                     )}
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Pagination */}
+            {paginationInfo.pages > 1 && (
+              <div className="mt-6 flex items-center justify-between border-t border-gray-200 pt-4">
+                <div className="flex items-center text-sm text-gray-700">
+                  <span>
+                    Showing <span className="font-medium">{(paginationInfo.page - 1) * paginationInfo.limit + 1}</span> to{' '}
+                    <span className="font-medium">
+                      {Math.min(paginationInfo.page * paginationInfo.limit, paginationInfo.total)}
+                    </span>{' '}
+                    of <span className="font-medium">{paginationInfo.total}</span> results
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                    disabled={paginationInfo.page === 1}
+                    className={`btn btn-secondary inline-flex items-center ${
+                      paginationInfo.page === 1 ? 'opacity-50 cursor-not-allowed' : ''
+                    }`}
+                  >
+                    <ChevronLeft className="w-4 h-4 mr-1" />
+                    Previous
+                  </button>
+                  <div className="flex items-center gap-1">
+                    {Array.from({ length: Math.min(5, paginationInfo.pages) }, (_, i) => {
+                      let pageNum;
+                      if (paginationInfo.pages <= 5) {
+                        pageNum = i + 1;
+                      } else if (paginationInfo.page <= 3) {
+                        pageNum = i + 1;
+                      } else if (paginationInfo.page >= paginationInfo.pages - 2) {
+                        pageNum = paginationInfo.pages - 4 + i;
+                      } else {
+                        pageNum = paginationInfo.page - 2 + i;
+                      }
+                      return (
+                        <button
+                          key={pageNum}
+                          onClick={() => setCurrentPage(pageNum)}
+                          className={`px-3 py-2 text-sm font-medium rounded-lg ${
+                            paginationInfo.page === pageNum
+                              ? 'bg-primary-600 text-white'
+                              : 'text-gray-700 hover:bg-gray-100'
+                          }`}
+                        >
+                          {pageNum}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <button
+                    onClick={() => setCurrentPage(prev => Math.min(paginationInfo.pages, prev + 1))}
+                    disabled={paginationInfo.page === paginationInfo.pages}
+                    className={`btn btn-secondary inline-flex items-center ${
+                      paginationInfo.page === paginationInfo.pages ? 'opacity-50 cursor-not-allowed' : ''
+                    }`}
+                  >
+                    Next
+                    <ChevronRight className="w-4 h-4 ml-1" />
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
         ) : (
           <div className="text-center py-12">
             <Clock className="w-16 h-16 text-gray-300 mx-auto mb-4" />
             <p className="text-gray-500 text-lg">No timesheets found</p>
-            <p className="text-gray-400 text-sm mt-2">Click "Log Time" to create your first timesheet</p>
+            <p className="text-gray-400 text-sm mt-2">
+              {statusFilter || projectFilter 
+                ? 'Try adjusting your filters' 
+                : 'Click "Log Time" to create your first timesheet'}
+            </p>
+            {(statusFilter || projectFilter) && (
+              <button
+                onClick={() => {
+                  setStatusFilter('');
+                  setProjectFilter('');
+                }}
+                className="mt-4 btn btn-secondary"
+              >
+                Clear Filters
+              </button>
+            )}
           </div>
         )}
       </div>

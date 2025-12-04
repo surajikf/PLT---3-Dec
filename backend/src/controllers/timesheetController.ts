@@ -367,3 +367,130 @@ export const rejectTimesheet = async (req: AuthRequest, res: Response, next: Nex
   }
 };
 
+export const bulkApproveTimesheets = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { ids } = req.body; // Array of timesheet IDs
+    const currentUser = req.user!;
+
+    if (!Array.isArray(ids) || ids.length === 0) {
+      throw new ValidationError('Timesheet IDs array is required');
+    }
+
+    if (currentUser.role !== 'SUPER_ADMIN' && currentUser.role !== 'ADMIN' && currentUser.role !== 'PROJECT_MANAGER') {
+      throw new ForbiddenError('Insufficient permissions');
+    }
+
+    // Get all timesheets to check permissions
+    const timesheets = await prisma.timesheet.findMany({
+      where: {
+        id: { in: ids },
+        status: 'SUBMITTED', // Only approve submitted timesheets
+      },
+      include: {
+        project: true,
+      },
+    });
+
+    if (timesheets.length === 0) {
+      throw new ValidationError('No submitted timesheets found to approve');
+    }
+
+    // Filter by permissions
+    const timesheetsToApprove = timesheets.filter((ts) => {
+      if (currentUser.role === 'PROJECT_MANAGER') {
+        return ts.project.managerId === currentUser.userId;
+      }
+      return true; // SUPER_ADMIN and ADMIN can approve all
+    });
+
+    if (timesheetsToApprove.length === 0) {
+      throw new ForbiddenError('No timesheets available for approval');
+    }
+
+    // Bulk update
+    const result = await prisma.timesheet.updateMany({
+      where: {
+        id: { in: timesheetsToApprove.map((ts) => ts.id) },
+      },
+      data: {
+        status: 'APPROVED',
+        approvedById: currentUser.userId,
+        approvedAt: new Date(),
+      },
+    });
+
+    res.json({
+      success: true,
+      data: {
+        approved: result.count,
+        total: timesheetsToApprove.length,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const bulkRejectTimesheets = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { ids, reason } = req.body; // Array of timesheet IDs and optional reason
+    const currentUser = req.user!;
+
+    if (!Array.isArray(ids) || ids.length === 0) {
+      throw new ValidationError('Timesheet IDs array is required');
+    }
+
+    if (currentUser.role !== 'SUPER_ADMIN' && currentUser.role !== 'ADMIN' && currentUser.role !== 'PROJECT_MANAGER') {
+      throw new ForbiddenError('Insufficient permissions');
+    }
+
+    // Get all timesheets to check permissions
+    const timesheets = await prisma.timesheet.findMany({
+      where: {
+        id: { in: ids },
+        status: 'SUBMITTED', // Only reject submitted timesheets
+      },
+      include: {
+        project: true,
+      },
+    });
+
+    if (timesheets.length === 0) {
+      throw new ValidationError('No submitted timesheets found to reject');
+    }
+
+    // Filter by permissions
+    const timesheetsToReject = timesheets.filter((ts) => {
+      if (currentUser.role === 'PROJECT_MANAGER') {
+        return ts.project.managerId === currentUser.userId;
+      }
+      return true; // SUPER_ADMIN and ADMIN can reject all
+    });
+
+    if (timesheetsToReject.length === 0) {
+      throw new ForbiddenError('No timesheets available for rejection');
+    }
+
+    // Bulk update
+    const result = await prisma.timesheet.updateMany({
+      where: {
+        id: { in: timesheetsToReject.map((ts) => ts.id) },
+      },
+      data: {
+        status: 'REJECTED',
+        rejectedReason: reason || null,
+      },
+    });
+
+    res.json({
+      success: true,
+      data: {
+        rejected: result.count,
+        total: timesheetsToReject.length,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+

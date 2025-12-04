@@ -1,7 +1,7 @@
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from 'react-query';
 import api from '../services/api';
-import { ArrowLeft, Users, Clock, TrendingUp, AlertCircle, Plus, CheckCircle, Edit, Link as LinkIcon, FileText, Trash2, Save, X } from 'lucide-react';
+import { ArrowLeft, Users, Clock, TrendingUp, AlertCircle, Plus, CheckCircle, Edit, Link as LinkIcon, FileText, Trash2, Save, X, Loader2 } from 'lucide-react';
 import { formatCurrency, formatCurrencyTooltip } from '../utils/currency';
 import { format } from 'date-fns';
 import { useState } from 'react';
@@ -9,6 +9,7 @@ import { authService } from '../services/authService';
 import { UserRole } from '../utils/roles';
 import toast from 'react-hot-toast';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import Breadcrumbs from '../components/Breadcrumbs';
 
 const ProjectDetailPage = () => {
   const { id } = useParams();
@@ -21,6 +22,19 @@ const ProjectDetailPage = () => {
   const [resourceModalOpen, setResourceModalOpen] = useState(false);
   const [editingResource, setEditingResource] = useState<any>(null);
   const [teamMemberModalOpen, setTeamMemberModalOpen] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    type: 'danger' | 'warning' | 'info' | 'success';
+    onConfirm: () => void;
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    type: 'warning',
+    onConfirm: () => {},
+  });
 
   const { data: project, isLoading } = useQuery(
     ['project', id],
@@ -62,7 +76,8 @@ const ProjectDetailPage = () => {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-64">
+      <div className="flex flex-col items-center justify-center h-64">
+        <Loader2 className="w-8 h-8 animate-spin text-primary-600 mb-4" />
         <p className="text-gray-500">Loading project...</p>
       </div>
     );
@@ -97,17 +112,33 @@ const ProjectDetailPage = () => {
 
   return (
     <div className="space-y-6">
+      {/* Breadcrumbs */}
+      <Breadcrumbs
+        items={[
+          { label: 'Projects', path: '/projects' },
+          { label: project.name },
+        ]}
+      />
+
       {/* Header */}
       <div className="flex items-center justify-between">
-        <button onClick={() => navigate('/projects')} className="text-primary-600 hover:text-primary-700 flex items-center">
+        <button 
+          onClick={() => navigate('/projects')} 
+          className="text-primary-600 hover:text-primary-700 flex items-center transition-colors"
+        >
           <ArrowLeft className="w-4 h-4 mr-2" />
           Back to Projects
         </button>
         {canEdit && (
-          <button className="btn btn-primary inline-flex items-center">
-            <Edit className="w-4 h-4 mr-2" />
-            Edit Project
-          </button>
+          <div className="flex gap-2">
+            <button 
+              onClick={() => navigate(`/master-management?tab=projects&edit=${id}`)}
+              className="btn btn-secondary inline-flex items-center"
+            >
+              <Edit className="w-4 h-4 mr-2" />
+              Edit Project
+            </button>
+          </div>
         )}
       </div>
 
@@ -400,7 +431,7 @@ const ProjectDetailPage = () => {
         {activeTab === 'team' && (
           <div className="card">
             <div className="flex justify-between items-center mb-4">
-              <h2 className="text-xl font-bold">Team Members</h2>
+              <h2 className="text-xl font-bold">Employees</h2>
               {canEdit && (
                 <button
                   onClick={() => setTeamMemberModalOpen(true)}
@@ -438,11 +469,18 @@ const ProjectDetailPage = () => {
                           <td className="px-6 py-4 whitespace-nowrap text-sm">
                             <button
                               onClick={() => {
-                                if (window.confirm(`Are you sure you want to remove ${member.user.firstName} ${member.user.lastName} from this project?`)) {
-                                  // API call to remove member would go here
-                                  // For now, we'll need to create an endpoint or use project update
-                                  toast.error('Remove member functionality requires backend endpoint');
-                                }
+                                setConfirmDialog({
+                                  isOpen: true,
+                                  title: 'Remove Employee',
+                                  message: `Are you sure you want to remove ${member.user.firstName} ${member.user.lastName} from this project? They will no longer be able to log time for this project.`,
+                                  type: 'warning',
+                                  onConfirm: () => {
+                                    // API call to remove member would go here
+                                    // For now, we'll need to create an endpoint or use project update
+                                    toast.error('Remove member functionality requires backend endpoint');
+                                    setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+                                  },
+                                });
                               }}
                               className="text-red-600 hover:text-red-700"
                             >
@@ -456,7 +494,7 @@ const ProjectDetailPage = () => {
                 </table>
               </div>
             ) : (
-              <p className="text-gray-500">No team members assigned</p>
+              <p className="text-gray-500">No employees assigned</p>
             )}
           </div>
         )}
@@ -535,16 +573,24 @@ const ProjectDetailPage = () => {
                             </button>
                             <button
                               onClick={() => {
-                                if (window.confirm('Are you sure you want to delete this task?')) {
+                                setConfirmDialog({
+                                  isOpen: true,
+                                  title: 'Delete Task',
+                                  message: 'Are you sure you want to delete this task? This action cannot be undone.',
+                                  type: 'danger',
+                                  onConfirm: () => {
                                   api.delete(`/tasks/${task.id}`).then(() => {
                                     toast.success('Task deleted successfully');
                                     queryClient.invalidateQueries(['tasks', id]);
                                     queryClient.invalidateQueries(['project', id]);
                                   }).catch((error: any) => {
-                                    toast.error(error.response?.data?.error || 'Failed to delete task');
+                                    const errorMessage = error.userMessage || error.response?.data?.error || 'Failed to delete task';
+                                    toast.error(errorMessage);
                                   });
-                                }
-                              }}
+                                  setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+                                },
+                              });
+                            }}
                               className="text-red-600 hover:text-red-900"
                               title="Delete task"
                             >
@@ -599,15 +645,23 @@ const ProjectDetailPage = () => {
                           </button>
                           <button
                             onClick={() => {
-                              if (window.confirm('Are you sure you want to delete this resource?')) {
+                              setConfirmDialog({
+                                isOpen: true,
+                                title: 'Delete Resource',
+                                message: 'Are you sure you want to delete this resource? This action cannot be undone.',
+                                type: 'danger',
+                                onConfirm: () => {
                                 api.delete(`/resources/${resource.id}`).then(() => {
                                   toast.success('Resource deleted successfully');
                                   queryClient.invalidateQueries(['project', id]);
                                 }).catch((error: any) => {
-                                  toast.error(error.response?.data?.error || 'Failed to delete resource');
+                                  const errorMessage = error.userMessage || error.response?.data?.error || 'Failed to delete resource';
+                                  toast.error(errorMessage);
                                 });
-                              }
-                            }}
+                                setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+                              },
+                            });
+                          }}
                             className="text-red-600 hover:text-red-900"
                           >
                             <Trash2 className="w-4 h-4" />
@@ -805,7 +859,8 @@ const TaskModal = ({ projectId, task, onClose }: { projectId: string; task: any;
         onClose();
       },
       onError: (error: any) => {
-        toast.error(error.response?.data?.error || 'Failed to create task');
+        const errorMessage = error.userMessage || error.response?.data?.error || 'Failed to create task';
+        toast.error(errorMessage);
       },
     }
   );
@@ -823,7 +878,8 @@ const TaskModal = ({ projectId, task, onClose }: { projectId: string; task: any;
         onClose();
       },
       onError: (error: any) => {
-        toast.error(error.response?.data?.error || 'Failed to update task');
+        const errorMessage = error.userMessage || error.response?.data?.error || 'Failed to update task';
+        toast.error(errorMessage);
       },
     }
   );
@@ -998,7 +1054,8 @@ const ResourceModal = ({ projectId, resource, onClose }: { projectId: string; re
         onClose();
       },
       onError: (error: any) => {
-        toast.error(error.response?.data?.error || 'Failed to create resource');
+        const errorMessage = error.userMessage || error.response?.data?.error || 'Failed to create resource';
+        toast.error(errorMessage);
       },
     }
   );
@@ -1015,7 +1072,8 @@ const ResourceModal = ({ projectId, resource, onClose }: { projectId: string; re
         onClose();
       },
       onError: (error: any) => {
-        toast.error(error.response?.data?.error || 'Failed to update resource');
+        const errorMessage = error.userMessage || error.response?.data?.error || 'Failed to update resource';
+        toast.error(errorMessage);
       },
     }
   );
@@ -1117,7 +1175,7 @@ const ResourceModal = ({ projectId, resource, onClose }: { projectId: string; re
   );
 };
 
-// Team Member Modal Component
+// Employee Modal Component
 const TeamMemberModal = ({ projectId, existingMembers, onClose }: { projectId: string; existingMembers: string[]; onClose: () => void }) => {
   const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
   const queryClient = useQueryClient();
@@ -1136,12 +1194,13 @@ const TeamMemberModal = ({ projectId, existingMembers, onClose }: { projectId: s
     },
     {
       onSuccess: () => {
-        toast.success('Team members added successfully');
+        toast.success('Employees added successfully');
         queryClient.invalidateQueries(['project', projectId]);
         onClose();
       },
       onError: (error: any) => {
-        toast.error(error.response?.data?.error || 'Failed to add team members');
+        const errorMessage = error.userMessage || error.response?.data?.error || 'Failed to add employees';
+        toast.error(errorMessage);
       },
     }
   );
@@ -1149,7 +1208,7 @@ const TeamMemberModal = ({ projectId, existingMembers, onClose }: { projectId: s
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (selectedUserIds.length === 0) {
-      toast.error('Please select at least one team member');
+      toast.error('Please select at least one employee');
       return;
     }
     addMembersMutation.mutate(selectedUserIds);
@@ -1165,7 +1224,7 @@ const TeamMemberModal = ({ projectId, existingMembers, onClose }: { projectId: s
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
       <div className="bg-white rounded-lg shadow-xl max-w-xl w-full mx-4 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between p-6 border-b border-gray-200">
-          <h2 className="text-xl font-semibold text-gray-900">Add Team Members</h2>
+          <h2 className="text-xl font-semibold text-gray-900">Add Employees</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
             <X className="w-6 h-6" />
           </button>

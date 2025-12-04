@@ -5,7 +5,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "mysql"
   url      = env("DATABASE_URL")
 }
 
@@ -45,27 +45,27 @@ enum CustomerStatus {
 }
 
 model User {
-  id            String    @id @default(uuid())
-  email         String    @unique
-  password      String
-  firstName     String
-  lastName      String
-  role          UserRole  @default(TEAM_MEMBER)
-  departmentId  String?
-  hourlyRate    Float?
-  isActive      Boolean   @default(true)
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  id           String   @id @default(uuid())
+  email        String   @unique
+  password     String
+  firstName    String
+  lastName     String
+  role         UserRole @default(TEAM_MEMBER)
+  departmentId String?
+  hourlyRate   Float?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-  department    Department? @relation("DepartmentMembers", fields: [departmentId], references: [id], onDelete: SetNull)
-  managedProjects Project[] @relation("ProjectManager")
+  department         Department?     @relation("DepartmentMembers", fields: [departmentId], references: [id], onDelete: SetNull)
+  managedProjects    Project[]       @relation("ProjectManager")
   projectMemberships ProjectMember[]
-  timesheets    Timesheet[]
-  createdProjects Project[] @relation("ProjectCreator")
-  createdDepartments Department[] @relation("DepartmentCreator")
-  headedDepartments Department[] @relation("DepartmentHead")
-  assignedTasks Task[] @relation("TaskAssignee")
-  createdTasks Task[] @relation("TaskCreator")
+  timesheets         Timesheet[]
+  createdProjects    Project[]       @relation("ProjectCreator")
+  createdDepartments Department[]    @relation("DepartmentCreator")
+  headedDepartments  Department[]    @relation("DepartmentHead")
+  assignedTasks      Task[]          @relation("TaskAssignee")
+  createdTasks       Task[]          @relation("TaskCreator")
 
   @@index([email])
   @@index([role])
@@ -80,27 +80,27 @@ model Department {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  head        User?    @relation("DepartmentHead", fields: [headId], references: [id], onDelete: SetNull)
-  creator     User     @relation("DepartmentCreator", fields: [createdById], references: [id])
-  members     User[]   @relation("DepartmentMembers")
-  projects    Project[]
+  head     User?     @relation("DepartmentHead", fields: [headId], references: [id], onDelete: SetNull)
+  creator  User      @relation("DepartmentCreator", fields: [createdById], references: [id])
+  members  User[]    @relation("DepartmentMembers")
+  projects Project[]
 
   @@index([headId])
 }
 
 model Customer {
-  id          String        @id @default(uuid())
-  name        String
-  industry    String?
+  id            String         @id @default(uuid())
+  name          String
+  industry      String?
   contactPerson String?
-  email       String?
-  phone       String?
-  address     String?
-  status      CustomerStatus @default(ACTIVE)
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
+  email         String?
+  phone         String?
+  address       String?
+  status        CustomerStatus @default(ACTIVE)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
 
-  projects    Project[]
+  projects Project[]
 
   @@index([status])
   @@index([name])
@@ -115,50 +115,56 @@ model Stage {
   createdAt     DateTime @default(now())
 
   projectStages ProjectStage[]
-  tasks         Task[]        @relation("StageTasks")
+  tasks         Task[]         @relation("StageTasks")
 }
 
 model Project {
-  id              String        @id @default(uuid())
-  code            String        @unique
-  name            String
-  description     String?
-  customerId      String?
-  managerId       String?
-  departmentId    String?
-  status          ProjectStatus @default(PLANNING)
-  budget          Float         @default(0)
-  startDate       DateTime?
-  endDate         DateTime?
-  healthScore     Float?        // 0-100
-  createdById     String
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+  id           String        @id @default(uuid())
+  code         String        @unique
+  name         String
+  description  String?
+  customerId   String?
+  managerId    String?
+  departmentId String?
+  status       ProjectStatus @default(PLANNING)
+  budget       Float         @default(0)
+  startDate    DateTime?
+  endDate      DateTime?
+  healthScore  Float? // 0-100
+  isArchived   Boolean       @default(false)
+  archivedAt   DateTime?
+  createdById  String
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
 
-  customer        Customer?     @relation(fields: [customerId], references: [id], onDelete: SetNull)
-  manager         User?         @relation("ProjectManager", fields: [managerId], references: [id], onDelete: SetNull)
-  department      Department?   @relation(fields: [departmentId], references: [id], onDelete: SetNull)
-  creator         User          @relation("ProjectCreator", fields: [createdById], references: [id])
-  members         ProjectMember[]
-  stages          ProjectStage[]
-  timesheets      Timesheet[]
-  resources       Resource[]
-  tasks           Task[]
+  customer   Customer?       @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  manager    User?           @relation("ProjectManager", fields: [managerId], references: [id], onDelete: SetNull)
+  department Department?     @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  creator    User            @relation("ProjectCreator", fields: [createdById], references: [id])
+  members    ProjectMember[]
+  stages     ProjectStage[]
+  timesheets Timesheet[]
+  resources  Resource[]
+  tasks      Task[]
 
   @@index([code])
   @@index([status])
   @@index([managerId])
   @@index([customerId])
+  @@index([departmentId])
+  @@index([createdAt])
+  @@index([status, createdAt])
+  @@index([isArchived])
 }
 
 model ProjectMember {
-  id        String   @id @default(uuid())
-  projectId String
-  userId    String
+  id         String   @id @default(uuid())
+  projectId  String
+  userId     String
   assignedAt DateTime @default(now())
 
-  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([projectId, userId])
   @@index([projectId])
@@ -166,57 +172,60 @@ model ProjectMember {
 }
 
 model ProjectStage {
-  id          String      @id @default(uuid())
-  projectId   String
-  stageId     String
-  weight      Float       @default(0) // Percentage
-  status      StageStatus @default(OFF)
+  id            String      @id @default(uuid())
+  projectId     String
+  stageId       String
+  weight        Float       @default(0) // Percentage
+  status        StageStatus @default(OFF)
   completedDate DateTime?
-  createdAt   DateTime    @default(now())
+  createdAt     DateTime    @default(now())
 
-  project     Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  stage       Stage       @relation(fields: [stageId], references: [id], onDelete: Cascade)
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  stage   Stage   @relation(fields: [stageId], references: [id], onDelete: Cascade)
 
   @@unique([projectId, stageId])
   @@index([projectId])
 }
 
 model Timesheet {
-  id          String          @id @default(uuid())
-  userId      String
-  projectId   String
-  date        DateTime
-  hours       Float           // 0.5-24
-  description String?
-  status      TimesheetStatus @default(DRAFT)
-  approvedById String?
-  approvedAt  DateTime?
+  id             String          @id @default(uuid())
+  userId         String
+  projectId      String
+  date           DateTime
+  hours          Float // 0.5-24
+  description    String?
+  status         TimesheetStatus @default(DRAFT)
+  approvedById   String?
+  approvedAt     DateTime?
   rejectedReason String?
-  createdAt   DateTime        @default(now())
-  updatedAt   DateTime        @updatedAt
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
 
-  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  project     Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([projectId])
   @@index([date])
   @@index([status])
+  @@index([userId, date])
+  @@index([projectId, status])
+  @@index([status, date])
 }
 
 model Resource {
   id          String   @id @default(uuid())
   name        String
   description String?
-  type        String   // Sitemap, Content, Design, Development, QA, Template, Library
+  type        String // Sitemap, Content, Design, Development, QA, Template, Library
   projectId   String?
-  url         String?  // Google Drive or other external link
+  url         String? // Google Drive or other external link
   accessLevel String   @default("Team") // Team, Public, Restricted
   createdById String
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  project     Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  project Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
 
   @@index([projectId])
   @@index([type])
@@ -238,23 +247,23 @@ enum TaskPriority {
 }
 
 model Task {
-  id          String      @id @default(uuid())
-  projectId   String
+  id           String       @id @default(uuid())
+  projectId    String
   assignedToId String?
-  title       String
-  description String?     @db.Text
-  status      TaskStatus  @default(TODO)
-  priority    TaskPriority @default(MEDIUM)
-  dueDate     DateTime?
-  stageId     String?
-  createdById String
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
+  title        String
+  description  String?      @db.Text
+  status       TaskStatus   @default(TODO)
+  priority     TaskPriority @default(MEDIUM)
+  dueDate      DateTime?
+  stageId      String?
+  createdById  String
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
 
-  project     Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  assignedTo  User?       @relation("TaskAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
-  stage       Stage?      @relation("StageTasks", fields: [stageId], references: [id], onDelete: SetNull)
-  creator     User        @relation("TaskCreator", fields: [createdById], references: [id])
+  project    Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  assignedTo User?   @relation("TaskAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+  stage      Stage?  @relation("StageTasks", fields: [stageId], references: [id], onDelete: SetNull)
+  creator    User    @relation("TaskCreator", fields: [createdById], references: [id])
 
   @@index([projectId])
   @@index([assignedToId])
@@ -263,18 +272,17 @@ model Task {
 }
 
 model AuditLog {
-  id          String   @id @default(uuid())
-  userId      String?
-  action      String
-  entityType  String
-  entityId    String?
-  details     String?  @db.Text
-  ipAddress   String?
-  userAgent   String?
-  createdAt   DateTime @default(now())
+  id         String   @id @default(uuid())
+  userId     String?
+  action     String
+  entityType String
+  entityId   String?
+  details    String?  @db.Text
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
 
   @@index([userId])
   @@index([entityType])
   @@index([createdAt])
 }
-

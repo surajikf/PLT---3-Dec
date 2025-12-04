@@ -5,9 +5,20 @@ import morgan from 'morgan';
 import compression from 'compression';
 import dotenv from 'dotenv';
 import { errorHandler } from './middleware/errorHandler';
+import { apiLimiter, authLimiter, writeLimiter, readLimiter } from './middleware/rateLimiter';
+import envValidation from './utils/envValidation';
 
 // Load environment variables
 dotenv.config();
+
+// Validate environment variables on startup
+try {
+  envValidation.validate();
+  console.log('✅ Environment variables validated');
+} catch (error) {
+  console.error('❌ Environment validation failed:', error);
+  process.exit(1);
+}
 
 // Import routes
 import authRoutes from './routes/authRoutes';
@@ -34,45 +45,55 @@ const allowedOrigins = process.env.CORS_ORIGIN
 
 app.use(cors({
   origin: (origin, callback) => {
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
+    // Allow requests with no origin (like mobile apps or curl requests) in development
+    if (!origin) {
+      if (process.env.NODE_ENV === 'development') {
+        return callback(null, true);
+      }
+      return callback(new Error('Origin required in production'));
+    }
     
     // Check if origin is in allowed list
     if (allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
-      // Also allow any Vercel preview/deployment URLs
-      if (origin.includes('vercel.app') || origin.includes('localhost')) {
+      // In development, allow localhost for testing
+      if (process.env.NODE_ENV === 'development' && origin.includes('localhost')) {
         callback(null, true);
       } else {
-        callback(new Error('Not allowed by CORS'));
+        // In production, only allow explicitly configured origins
+        callback(new Error(`Origin ${origin} is not allowed by CORS policy`));
       }
     }
   },
   credentials: true,
+  optionsSuccessStatus: 200, // Some legacy browsers (IE11, various SmartTVs) choke on 204
 }));
 app.use(compression());
 app.use(morgan('dev'));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Health check
+// Health check (no rate limiting)
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// API Routes
-app.use('/api/auth', authRoutes);
-app.use('/api/users', userRoutes);
-app.use('/api/projects', projectRoutes);
-app.use('/api/timesheets', timesheetRoutes);
-app.use('/api/customers', customerRoutes);
-app.use('/api/departments', departmentRoutes);
-app.use('/api/resources', resourceRoutes);
-app.use('/api/reports', reportRoutes);
-app.use('/api/stages', stageRoutes);
-app.use('/api/tasks', taskRoutes);
-app.use('/api/profit-loss', profitLossRoutes);
+// Apply general API rate limiting to all routes
+app.use('/api', apiLimiter);
+
+// API Routes with specific rate limiters
+app.use('/api/auth', authLimiter, authRoutes);
+app.use('/api/users', writeLimiter, userRoutes);
+app.use('/api/projects', writeLimiter, projectRoutes);
+app.use('/api/timesheets', writeLimiter, timesheetRoutes);
+app.use('/api/customers', writeLimiter, customerRoutes);
+app.use('/api/departments', writeLimiter, departmentRoutes);
+app.use('/api/resources', writeLimiter, resourceRoutes);
+app.use('/api/reports', readLimiter, reportRoutes);
+app.use('/api/stages', writeLimiter, stageRoutes);
+app.use('/api/tasks', writeLimiter, taskRoutes);
+app.use('/api/profit-loss', readLimiter, profitLossRoutes);
 
 // Error handler (must be last)
 app.use(errorHandler);

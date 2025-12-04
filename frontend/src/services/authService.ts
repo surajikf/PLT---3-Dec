@@ -39,7 +39,9 @@ export const authService = {
         localStorage.setItem('token', token);
         localStorage.setItem('user', JSON.stringify(user));
       } catch (storageError) {
-        console.error('localStorage error:', storageError);
+        if (process.env.NODE_ENV === 'development') {
+          console.error('localStorage error:', storageError);
+        }
         // Continue even if localStorage fails (might be in private browsing mode)
       }
       
@@ -48,7 +50,9 @@ export const authService = {
     } catch (error: any) {
       const errorMessage = error.response?.data?.error || error.message || 'Login failed';
       toast.error(errorMessage);
-      console.error('Login error:', error);
+      if (process.env.NODE_ENV === 'development') {
+        console.error('Login error:', error);
+      }
       throw error;
     }
   },

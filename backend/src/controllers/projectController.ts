@@ -6,10 +6,22 @@ import { validateProjectCode, validateBudget, validateDateRange } from '../utils
 
 export const getProjects = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { status, managerId, customerId, departmentId, search, page = 1, limit = 50 } = req.query;
+    const { status, managerId, customerId, departmentId, search, page = 1, limit = 50, includeArchived } = req.query;
     const currentUser = req.user!;
 
     const where: any = {};
+
+    // Archive filter - build this first
+    // Default: exclude archived projects (show only active ones)
+    if (includeArchived === 'archived') {
+      // Show only archived projects
+      where.isArchived = true;
+    } else if (includeArchived !== 'true') {
+      // Default: exclude archived projects
+      // For MySQL: filter by false (null values will be excluded since default is false)
+      where.isArchived = false;
+    }
+    // If includeArchived === 'true', don't filter by archive status
 
     // Role-based filtering
     if (currentUser.role === 'CLIENT') {
@@ -34,22 +46,47 @@ export const getProjects = async (req: AuthRequest, res: Response, next: NextFun
       };
     }
 
+    // Additional filters
     if (status) where.status = status;
     if (managerId) where.managerId = managerId;
     if (customerId) where.customerId = customerId;
     if (departmentId) where.departmentId = departmentId;
+    
+    // Handle search
     if (search) {
-      where.OR = [
+      const searchOR = [
         { name: { contains: search as string, mode: 'insensitive' } },
         { code: { contains: search as string, mode: 'insensitive' } },
       ];
+      
+      // If we have other conditions, combine search with AND
+      if (Object.keys(where).length > 1 || (where.OR && where.OR.length > 0)) {
+        // We have other filters, need to use AND
+        const otherConditions = { ...where };
+        delete otherConditions.OR;
+        
+        where.AND = [];
+        if (Object.keys(otherConditions).length > 0) {
+          where.AND.push(otherConditions);
+        }
+        where.AND.push({ OR: searchOR });
+        delete where.OR;
+      } else {
+        where.OR = searchOR;
+      }
     }
+
+    // Use where directly - it already has all filters including archive filter
+    const finalWhere = where;
 
     const skip = (Number(page) - 1) * Number(limit);
 
+    // Include members relation for employees to enable frontend filtering
+    const includeMembers = currentUser.role === 'TEAM_MEMBER';
+    
     const [projects, total] = await Promise.all([
       prisma.project.findMany({
-        where,
+        where: finalWhere,
         skip,
         take: Number(limit),
         include: {
@@ -73,6 +110,18 @@ export const getProjects = async (req: AuthRequest, res: Response, next: NextFun
               name: true,
             },
           },
+          ...(includeMembers && {
+            members: {
+              select: {
+                userId: true,
+                user: {
+                  select: {
+                    id: true,
+                  },
+                },
+              },
+            },
+          }),
           _count: {
             select: {
               members: true,
@@ -82,7 +131,7 @@ export const getProjects = async (req: AuthRequest, res: Response, next: NextFun
         },
         orderBy: { createdAt: 'desc' },
       }),
-      prisma.project.count({ where }),
+      prisma.project.count({ where: finalWhere }),
     ]);
 
     res.json({
@@ -95,7 +144,13 @@ export const getProjects = async (req: AuthRequest, res: Response, next: NextFun
         pages: Math.ceil(total / Number(limit)),
       },
     });
-  } catch (error) {
+  } catch (error: any) {
+    console.error('❌ Error in getProjects:', error);
+    console.error('Error message:', error.message);
+    console.error('Error stack:', error.stack);
+    if (error.code) {
+      console.error('Error code:', error.code);
+    }
     next(error);
   }
 };
@@ -558,6 +613,138 @@ export const updateProjectStage = async (req: AuthRequest, res: Response, next: 
     res.json({
       success: true,
       data: updatedStage,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const bulkUpdateProjectStatus = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { ids, status } = req.body;
+    const currentUser = req.user!;
+
+    if (!Array.isArray(ids) || ids.length === 0) {
+      throw new ValidationError('Project IDs array is required');
+    }
+
+    if (!status) {
+      throw new ValidationError('Status is required');
+    }
+
+    const validStatuses = ['PLANNING', 'IN_PROGRESS', 'ON_HOLD', 'COMPLETED', 'CANCELLED'];
+    if (!validStatuses.includes(status)) {
+      throw new ValidationError('Invalid status');
+    }
+
+    if (currentUser.role !== 'SUPER_ADMIN' && currentUser.role !== 'ADMIN' && currentUser.role !== 'PROJECT_MANAGER') {
+      throw new ForbiddenError('Insufficient permissions');
+    }
+
+    // Get projects to check permissions
+    const projects = await prisma.project.findMany({
+      where: { id: { in: ids } },
+    });
+
+    if (projects.length === 0) {
+      throw new ValidationError('No projects found');
+    }
+
+    // Filter by permissions for PROJECT_MANAGER
+    const projectsToUpdate = projects.filter((p) => {
+      if (currentUser.role === 'PROJECT_MANAGER') {
+        return p.managerId === currentUser.userId;
+      }
+      return true;
+    });
+
+    if (projectsToUpdate.length === 0) {
+      throw new ForbiddenError('No projects available for update');
+    }
+
+    const result = await prisma.project.updateMany({
+      where: {
+        id: { in: projectsToUpdate.map((p) => p.id) },
+      },
+      data: { status },
+    });
+
+    res.json({
+      success: true,
+      data: {
+        updated: result.count,
+        total: projectsToUpdate.length,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const bulkDeleteProjects = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { ids } = req.body;
+    const currentUser = req.user!;
+
+    if (!Array.isArray(ids) || ids.length === 0) {
+      throw new ValidationError('Project IDs array is required');
+    }
+
+    if (currentUser.role !== 'SUPER_ADMIN' && currentUser.role !== 'ADMIN') {
+      throw new ForbiddenError('Insufficient permissions');
+    }
+
+    // Soft delete: Archive projects instead of hard delete
+    const result = await prisma.project.updateMany({
+      where: { id: { in: ids } },
+      data: {
+        isArchived: true,
+        archivedAt: new Date(),
+      },
+    });
+
+    res.json({
+      success: true,
+      data: {
+        archived: result.count,
+        total: ids.length,
+      },
+      message: `${result.count} project(s) archived successfully`,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const bulkRestoreProjects = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { ids } = req.body;
+    const currentUser = req.user!;
+
+    if (!Array.isArray(ids) || ids.length === 0) {
+      throw new ValidationError('Project IDs array is required');
+    }
+
+    if (currentUser.role !== 'SUPER_ADMIN' && currentUser.role !== 'ADMIN') {
+      throw new ForbiddenError('Insufficient permissions');
+    }
+
+    // Restore archived projects
+    const result = await prisma.project.updateMany({
+      where: { id: { in: ids }, isArchived: true },
+      data: {
+        isArchived: false,
+        archivedAt: null,
+      },
+    });
+
+    res.json({
+      success: true,
+      data: {
+        restored: result.count,
+        total: ids.length,
+      },
+      message: `${result.count} project(s) restored successfully`,
     });
   } catch (error) {
     next(error);

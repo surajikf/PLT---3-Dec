@@ -172,3 +172,71 @@ export const deleteCustomer = async (req: AuthRequest, res: Response, next: Next
   }
 };
 
+export const bulkUpdateCustomerStatus = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { ids, status } = req.body;
+    const currentUser = req.user!;
+
+    if (!Array.isArray(ids) || ids.length === 0) {
+      throw new ForbiddenError('Customer IDs array is required');
+    }
+
+    if (!status) {
+      throw new ForbiddenError('Status is required');
+    }
+
+    const validStatuses = ['ACTIVE', 'INACTIVE'];
+    if (!validStatuses.includes(status)) {
+      throw new ForbiddenError('Invalid status');
+    }
+
+    if (currentUser.role !== 'SUPER_ADMIN' && currentUser.role !== 'ADMIN') {
+      throw new ForbiddenError('Insufficient permissions');
+    }
+
+    const result = await prisma.customer.updateMany({
+      where: { id: { in: ids } },
+      data: { status },
+    });
+
+    res.json({
+      success: true,
+      data: {
+        updated: result.count,
+        total: ids.length,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const bulkDeleteCustomers = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { ids } = req.body;
+    const currentUser = req.user!;
+
+    if (!Array.isArray(ids) || ids.length === 0) {
+      throw new ForbiddenError('Customer IDs array is required');
+    }
+
+    if (currentUser.role !== 'SUPER_ADMIN' && currentUser.role !== 'ADMIN') {
+      throw new ForbiddenError('Insufficient permissions');
+    }
+
+    const result = await prisma.customer.deleteMany({
+      where: { id: { in: ids } },
+    });
+
+    res.json({
+      success: true,
+      data: {
+        deleted: result.count,
+        total: ids.length,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+

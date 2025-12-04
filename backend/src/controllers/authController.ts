@@ -20,7 +20,7 @@ export const register = async (req: Request, res: Response, next: NextFunction) 
     // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Create user
+    // Create user (default isActive to true)
     const user = await prisma.user.create({
       data: {
         email,
@@ -30,6 +30,7 @@ export const register = async (req: Request, res: Response, next: NextFunction) 
         role: role || 'TEAM_MEMBER',
         hourlyRate: hourlyRate ? parseFloat(hourlyRate) : null,
         departmentId: departmentId || null,
+        isActive: true, // Explicitly set to true for new users
       },
       select: {
         id: true,
@@ -79,8 +80,13 @@ export const login = async (req: Request, res: Response, next: NextFunction) => 
       },
     });
 
-    if (!user || !user.isActive) {
+    if (!user) {
       throw new UnauthorizedError('Invalid credentials');
+    }
+
+    // Check if user is active
+    if (!user.isActive) {
+      throw new UnauthorizedError('Your account has been deactivated. Please contact your administrator.');
     }
 
     // Verify password
