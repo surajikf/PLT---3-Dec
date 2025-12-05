@@ -150,8 +150,10 @@ export const getAllProjectsProfitLoss = async (req: AuthRequest, res: Response, 
       throw new ForbiddenError('Access denied. Only administrators can view profit and loss data.');
     }
 
-    // Get all projects with filters
-    const where: any = {};
+    // Get all non-archived projects with filters
+    const where: any = {
+      isArchived: false,
+    };
     if (status) where.status = status;
     if (startDate || endDate) {
       where.createdAt = {};
@@ -172,27 +174,38 @@ export const getAllProjectsProfitLoss = async (req: AuthRequest, res: Response, 
       orderBy: { createdAt: 'desc' },
     });
 
+    // Optimize: Get all timesheets in one query
+    const allTimesheets = await prisma.timesheet.findMany({
+      where: {
+        projectId: { in: projects.map(p => p.id) },
+        status: 'APPROVED',
+      },
+      include: {
+        user: {
+          select: {
+            hourlyRate: true,
+          },
+        },
+      },
+    });
+
+    // Group timesheets by project
+    const timesheetsByProject: Record<string, typeof allTimesheets> = {};
+    for (const ts of allTimesheets) {
+      if (!timesheetsByProject[ts.projectId]) {
+        timesheetsByProject[ts.projectId] = [];
+      }
+      timesheetsByProject[ts.projectId].push(ts);
+    }
+
     // Calculate P&L for each project
-    const projectsWithPL = await Promise.all(
-      projects.map(async (project) => {
-        const timesheets = await prisma.timesheet.findMany({
-          where: {
-            projectId: project.id,
-            status: 'APPROVED',
-          },
-          include: {
-            user: {
-              select: {
-                hourlyRate: true,
-              },
-            },
-          },
-        });
+    const projectsWithPL = projects.map((project) => {
+        const timesheets = timesheetsByProject[project.id] || [];
 
         let totalActualCost = 0;
         let totalHours = 0;
         for (const ts of timesheets) {
-          const hourlyRate = ts.user.hourlyRate || 0;
+          const hourlyRate = ts.user?.hourlyRate || 0;
           totalActualCost += ts.hours * hourlyRate;
           totalHours += ts.hours;
         }
@@ -216,8 +229,7 @@ export const getAllProjectsProfitLoss = async (req: AuthRequest, res: Response, 
           },
           timesheetCount: timesheets.length,
         };
-      })
-    );
+    });
 
     // Apply filters
     let filtered = projectsWithPL;
@@ -393,8 +405,11 @@ export const getProfitLossDashboard = async (req: AuthRequest, res: Response, ne
       throw new ForbiddenError('Access denied. Only administrators can view profit and loss dashboard.');
     }
 
-    // Get all projects
+    // Get all non-archived projects
     const projects = await prisma.project.findMany({
+      where: {
+        isArchived: false,
+      },
       select: {
         id: true,
         name: true,
@@ -413,26 +428,37 @@ export const getProfitLossDashboard = async (req: AuthRequest, res: Response, ne
     let profitProjects = 0;
     let lossProjects = 0;
 
-    const projectPLs = await Promise.all(
-      projects.map(async (project) => {
-        const timesheets = await prisma.timesheet.findMany({
-          where: {
-            projectId: project.id,
-            status: 'APPROVED',
+    // Optimize: Get all timesheets in one query instead of per-project
+    const allTimesheets = await prisma.timesheet.findMany({
+      where: {
+        projectId: { in: projects.map(p => p.id) },
+        status: 'APPROVED',
+      },
+      include: {
+        user: {
+          select: {
+            hourlyRate: true,
           },
-          include: {
-            user: {
-              select: {
-                hourlyRate: true,
-              },
-            },
-          },
-        });
+        },
+      },
+    });
+
+    // Group timesheets by project
+    const timesheetsByProject: Record<string, typeof allTimesheets> = {};
+    for (const ts of allTimesheets) {
+      if (!timesheetsByProject[ts.projectId]) {
+        timesheetsByProject[ts.projectId] = [];
+      }
+      timesheetsByProject[ts.projectId].push(ts);
+    }
+
+    const projectPLs = projects.map((project) => {
+        const timesheets = timesheetsByProject[project.id] || [];
 
         let actualCost = 0;
         let hours = 0;
         for (const ts of timesheets) {
-          const hourlyRate = ts.user.hourlyRate || 0;
+          const hourlyRate = ts.user?.hourlyRate || 0;
           actualCost += ts.hours * hourlyRate;
           hours += ts.hours;
         }
@@ -454,8 +480,7 @@ export const getProfitLossDashboard = async (req: AuthRequest, res: Response, ne
           hours,
           profitLoss,
         };
-      })
-    );
+      });
 
     // Top profit projects
     const topProfitProjects = projectPLs

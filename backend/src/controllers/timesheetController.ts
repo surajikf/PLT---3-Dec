@@ -380,23 +380,45 @@ export const bulkApproveTimesheets = async (req: AuthRequest, res: Response, nex
       throw new ForbiddenError('Insufficient permissions');
     }
 
-    // Get all timesheets to check permissions
-    const timesheets = await prisma.timesheet.findMany({
+    // First, check if all timesheets exist (regardless of status)
+    const allTimesheets = await prisma.timesheet.findMany({
       where: {
         id: { in: ids },
-        status: 'SUBMITTED', // Only approve submitted timesheets
       },
       include: {
         project: true,
       },
     });
 
-    if (timesheets.length === 0) {
+    // Check for non-existent timesheets
+    const foundIds = allTimesheets.map((ts) => ts.id);
+    const notFoundIds = ids.filter((id: string) => !foundIds.includes(id));
+    
+    if (notFoundIds.length > 0 && allTimesheets.length === 0) {
+      // All timesheets are missing
+      throw new NotFoundError('Timesheet(s) not found');
+    }
+
+    // Get only submitted timesheets
+    const submittedTimesheets = allTimesheets.filter((ts) => ts.status === 'SUBMITTED');
+
+    if (submittedTimesheets.length === 0) {
+      // Check if any were found but not in SUBMITTED status
+      if (allTimesheets.length > 0) {
+        const statusCounts: Record<string, number> = {};
+        allTimesheets.forEach((ts) => {
+          statusCounts[ts.status] = (statusCounts[ts.status] || 0) + 1;
+        });
+        const statusMsg = Object.entries(statusCounts)
+          .map(([status, count]) => `${count} ${status.toLowerCase()}`)
+          .join(', ');
+        throw new ValidationError(`No submitted timesheets found. Selected timesheets are: ${statusMsg}`);
+      }
       throw new ValidationError('No submitted timesheets found to approve');
     }
 
     // Filter by permissions
-    const timesheetsToApprove = timesheets.filter((ts) => {
+    const timesheetsToApprove = submittedTimesheets.filter((ts) => {
       if (currentUser.role === 'PROJECT_MANAGER') {
         return ts.project.managerId === currentUser.userId;
       }
@@ -404,7 +426,7 @@ export const bulkApproveTimesheets = async (req: AuthRequest, res: Response, nex
     });
 
     if (timesheetsToApprove.length === 0) {
-      throw new ForbiddenError('No timesheets available for approval');
+      throw new ForbiddenError('No timesheets available for approval. You may not have permission to approve these timesheets.');
     }
 
     // Bulk update
@@ -419,13 +441,25 @@ export const bulkApproveTimesheets = async (req: AuthRequest, res: Response, nex
       },
     });
 
-    res.json({
+    // Build response with details about what happened
+    const skippedCount = ids.length - timesheetsToApprove.length;
+    const response: any = {
       success: true,
       data: {
         approved: result.count,
         total: timesheetsToApprove.length,
+        requested: ids.length,
       },
-    });
+    };
+
+    if (notFoundIds.length > 0) {
+      response.data.notFound = notFoundIds.length;
+    }
+    if (skippedCount > 0) {
+      response.data.skipped = skippedCount;
+    }
+
+    res.json(response);
   } catch (error) {
     next(error);
   }
@@ -444,23 +478,45 @@ export const bulkRejectTimesheets = async (req: AuthRequest, res: Response, next
       throw new ForbiddenError('Insufficient permissions');
     }
 
-    // Get all timesheets to check permissions
-    const timesheets = await prisma.timesheet.findMany({
+    // First, check if all timesheets exist (regardless of status)
+    const allTimesheets = await prisma.timesheet.findMany({
       where: {
         id: { in: ids },
-        status: 'SUBMITTED', // Only reject submitted timesheets
       },
       include: {
         project: true,
       },
     });
 
-    if (timesheets.length === 0) {
+    // Check for non-existent timesheets
+    const foundIds = allTimesheets.map((ts) => ts.id);
+    const notFoundIds = ids.filter((id: string) => !foundIds.includes(id));
+    
+    if (notFoundIds.length > 0 && allTimesheets.length === 0) {
+      // All timesheets are missing
+      throw new NotFoundError('Timesheet(s) not found');
+    }
+
+    // Get only submitted timesheets
+    const submittedTimesheets = allTimesheets.filter((ts) => ts.status === 'SUBMITTED');
+
+    if (submittedTimesheets.length === 0) {
+      // Check if any were found but not in SUBMITTED status
+      if (allTimesheets.length > 0) {
+        const statusCounts: Record<string, number> = {};
+        allTimesheets.forEach((ts) => {
+          statusCounts[ts.status] = (statusCounts[ts.status] || 0) + 1;
+        });
+        const statusMsg = Object.entries(statusCounts)
+          .map(([status, count]) => `${count} ${status.toLowerCase()}`)
+          .join(', ');
+        throw new ValidationError(`No submitted timesheets found. Selected timesheets are: ${statusMsg}`);
+      }
       throw new ValidationError('No submitted timesheets found to reject');
     }
 
     // Filter by permissions
-    const timesheetsToReject = timesheets.filter((ts) => {
+    const timesheetsToReject = submittedTimesheets.filter((ts) => {
       if (currentUser.role === 'PROJECT_MANAGER') {
         return ts.project.managerId === currentUser.userId;
       }
@@ -468,7 +524,7 @@ export const bulkRejectTimesheets = async (req: AuthRequest, res: Response, next
     });
 
     if (timesheetsToReject.length === 0) {
-      throw new ForbiddenError('No timesheets available for rejection');
+      throw new ForbiddenError('No timesheets available for rejection. You may not have permission to reject these timesheets.');
     }
 
     // Bulk update
@@ -482,13 +538,25 @@ export const bulkRejectTimesheets = async (req: AuthRequest, res: Response, next
       },
     });
 
-    res.json({
+    // Build response with details about what happened
+    const skippedCount = ids.length - timesheetsToReject.length;
+    const response: any = {
       success: true,
       data: {
         rejected: result.count,
         total: timesheetsToReject.length,
+        requested: ids.length,
       },
-    });
+    };
+
+    if (notFoundIds.length > 0) {
+      response.data.notFound = notFoundIds.length;
+    }
+    if (skippedCount > 0) {
+      response.data.skipped = skippedCount;
+    }
+
+    res.json(response);
   } catch (error) {
     next(error);
   }

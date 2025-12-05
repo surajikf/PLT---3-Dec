@@ -18,11 +18,15 @@ import {
   Search,
   MoreVertical,
   UserCheck,
-  UserX
+  UserX,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown
 } from 'lucide-react';
 import { formatCurrency } from '../utils/currency';
 import { roleLabels } from '../utils/roles';
 import { authService } from '../services/authService';
+import { useTableSort } from '../utils/tableSort';
 
 type TabType = 'customers' | 'projects' | 'employees' | 'departments' | 'stages';
 
@@ -156,6 +160,27 @@ const CustomersManagement = () => {
     c.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
     c.industry?.toLowerCase().includes(searchTerm.toLowerCase())
   ) || [];
+
+  // Table sorting
+  const { sortedData: sortedCustomers, SortableHeader: CustomerSortableHeader } = useTableSort({
+    data: filteredCustomers,
+    getValue: (item: any, field: string) => {
+      switch (field) {
+        case 'name':
+          return item.name || '';
+        case 'email':
+          return item.email || 'N/A';
+        case 'industry':
+          return item.industry || 'N/A';
+        case 'contact':
+          return item.contactPerson || 'N/A';
+        case 'status':
+          return item.status || '';
+        default:
+          return (item as any)[field];
+      }
+    },
+  });
 
   const bulkStatusUpdateMutation = useMutation(
     async ({ ids, status }: { ids: string[]; status: string }) => {
@@ -323,16 +348,16 @@ const CustomersManagement = () => {
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Email</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Industry</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Contact</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                <CustomerSortableHeader field="name">Name</CustomerSortableHeader>
+                <CustomerSortableHeader field="email">Email</CustomerSortableHeader>
+                <CustomerSortableHeader field="industry">Industry</CustomerSortableHeader>
+                <CustomerSortableHeader field="contact">Contact</CustomerSortableHeader>
+                <CustomerSortableHeader field="status">Status</CustomerSortableHeader>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {filteredCustomers.map((customer: any) => (
+              {sortedCustomers.map((customer: any) => (
                 <tr key={customer.id} className={`hover:bg-gray-50 ${selectedCustomers.has(customer.id) ? 'bg-primary-50' : ''}`}>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <input
@@ -657,6 +682,27 @@ const ProjectsManagement = () => {
     p.customer?.name?.toLowerCase().includes(searchTerm.toLowerCase())
   ) || [];
 
+  // Table sorting
+  const { sortedData: sortedProjects, SortableHeader: ProjectSortableHeader } = useTableSort({
+    data: filteredProjects,
+    getValue: (item: any, field: string) => {
+      switch (field) {
+        case 'code':
+          return item.code || '';
+        case 'name':
+          return item.name || '';
+        case 'customer':
+          return item.customer?.name || 'N/A';
+        case 'budget':
+          return item.budget || 0;
+        case 'status':
+          return item.status || '';
+        default:
+          return (item as any)[field];
+      }
+    },
+  });
+
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center">
@@ -693,16 +739,16 @@ const ProjectsManagement = () => {
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Code</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Customer</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Budget</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                <ProjectSortableHeader field="code">Code</ProjectSortableHeader>
+                <ProjectSortableHeader field="name">Name</ProjectSortableHeader>
+                <ProjectSortableHeader field="customer">Customer</ProjectSortableHeader>
+                <ProjectSortableHeader field="budget">Budget</ProjectSortableHeader>
+                <ProjectSortableHeader field="status">Status</ProjectSortableHeader>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {filteredProjects.map((project: any) => (
+              {sortedProjects.map((project: any) => (
                 <tr key={project.id} className="hover:bg-gray-50">
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                     {project.code}
@@ -1029,6 +1075,8 @@ const EmployeesManagement = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<any>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [sortField, setSortField] = useState<'role' | 'department' | null>(null);
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const queryClient = useQueryClient();
   const [confirmDialog, setConfirmDialog] = useState<{
     isOpen: boolean;
@@ -1079,6 +1127,53 @@ const EmployeesManagement = () => {
     );
   }) || [];
 
+  // Sort employees
+  const sortedEmployees = [...filteredEmployees].sort((a: any, b: any) => {
+    if (!sortField) return 0;
+
+    let aValue: string;
+    let bValue: string;
+
+    if (sortField === 'role') {
+      aValue = roleLabels[a.role as keyof typeof roleLabels] || a.role || '';
+      bValue = roleLabels[b.role as keyof typeof roleLabels] || b.role || '';
+    } else if (sortField === 'department') {
+      aValue = a.department?.name || 'N/A';
+      bValue = b.department?.name || 'N/A';
+    } else {
+      return 0;
+    }
+
+    // Handle 'N/A' values - put them at the end
+    if (aValue === 'N/A' && bValue !== 'N/A') return 1;
+    if (aValue !== 'N/A' && bValue === 'N/A') return -1;
+    if (aValue === 'N/A' && bValue === 'N/A') return 0;
+
+    // Case-insensitive string comparison
+    const comparison = aValue.toLowerCase().localeCompare(bValue.toLowerCase());
+    return sortDirection === 'asc' ? comparison : -comparison;
+  });
+
+  const handleSort = (field: 'role' | 'department') => {
+    if (sortField === field) {
+      // Toggle direction if clicking the same field
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      // Set new field and default to ascending
+      setSortField(field);
+      setSortDirection('asc');
+    }
+  };
+
+  const SortIcon = ({ field }: { field: 'role' | 'department' }) => {
+    if (sortField !== field) {
+      return <ArrowUpDown className="w-4 h-4 ml-1 text-gray-400" />;
+    }
+    return sortDirection === 'asc' 
+      ? <ArrowUp className="w-4 h-4 ml-1 text-indigo-600" />
+      : <ArrowDown className="w-4 h-4 ml-1 text-indigo-600" />;
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center">
@@ -1117,15 +1212,31 @@ const EmployeesManagement = () => {
               <tr>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Email</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Role</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Department</th>
+                <th 
+                  className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100 select-none"
+                  onClick={() => handleSort('role')}
+                >
+                  <div className="flex items-center">
+                    Role
+                    <SortIcon field="role" />
+                  </div>
+                </th>
+                <th 
+                  className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100 select-none"
+                  onClick={() => handleSort('department')}
+                >
+                  <div className="flex items-center">
+                    Department
+                    <SortIcon field="department" />
+                  </div>
+                </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Hourly Rate</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {filteredEmployees.map((employee: any) => (
+              {sortedEmployees.map((employee: any) => (
                 <tr key={employee.id} className="hover:bg-gray-50">
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                     {employee.firstName} {employee.lastName}
@@ -1489,6 +1600,25 @@ const DepartmentsManagement = () => {
     d.head?.lastName?.toLowerCase().includes(searchTerm.toLowerCase())
   ) || [];
 
+  // Table sorting
+  const { sortedData: sortedDepartments, SortableHeader: DepartmentSortableHeader } = useTableSort({
+    data: filteredDepartments,
+    getValue: (item: any, field: string) => {
+      switch (field) {
+        case 'name':
+          return item.name || '';
+        case 'head':
+          return item.head ? `${item.head.firstName || ''} ${item.head.lastName || ''}`.trim() : 'N/A';
+        case 'members':
+          return item._count?.members || 0;
+        case 'projects':
+          return item._count?.projects || 0;
+        default:
+          return (item as any)[field];
+      }
+    },
+  });
+
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center">
@@ -1525,15 +1655,15 @@ const DepartmentsManagement = () => {
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Head</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Members</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Projects</th>
+                <DepartmentSortableHeader field="name">Name</DepartmentSortableHeader>
+                <DepartmentSortableHeader field="head">Head</DepartmentSortableHeader>
+                <DepartmentSortableHeader field="members">Members</DepartmentSortableHeader>
+                <DepartmentSortableHeader field="projects">Projects</DepartmentSortableHeader>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {filteredDepartments.map((dept: any) => (
+              {sortedDepartments.map((dept: any) => (
                 <tr key={dept.id} className="hover:bg-gray-50">
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                     {dept.name}
@@ -1763,6 +1893,25 @@ const StagesManagement = () => {
     s.type?.toLowerCase().includes(searchTerm.toLowerCase())
   ) || [];
 
+  // Table sorting
+  const { sortedData: sortedStages, SortableHeader: StageSortableHeader } = useTableSort({
+    data: filteredStages,
+    getValue: (item: any, field: string) => {
+      switch (field) {
+        case 'name':
+          return item.name || '';
+        case 'type':
+          return item.type || 'Standard';
+        case 'weight':
+          return item.defaultWeight || 0;
+        case 'status':
+          return item.isActive ? 'Active' : 'Inactive';
+        default:
+          return (item as any)[field];
+      }
+    },
+  });
+
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center">
@@ -1799,15 +1948,15 @@ const StagesManagement = () => {
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Weight</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                <StageSortableHeader field="name">Name</StageSortableHeader>
+                <StageSortableHeader field="type">Type</StageSortableHeader>
+                <StageSortableHeader field="weight">Weight</StageSortableHeader>
+                <StageSortableHeader field="status">Status</StageSortableHeader>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {filteredStages.map((stage: any) => (
+              {sortedStages.map((stage: any) => (
                 <tr key={stage.id} className="hover:bg-gray-50">
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                     {stage.name}

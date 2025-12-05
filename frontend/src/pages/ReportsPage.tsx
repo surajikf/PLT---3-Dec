@@ -10,6 +10,7 @@ import toast from 'react-hot-toast';
 import Breadcrumbs from '../components/Breadcrumbs';
 import LoadingSkeleton from '../components/LoadingSkeleton';
 import EmptyState from '../components/EmptyState';
+import { useTableSort } from '../utils/tableSort';
 
 const ReportsPage = () => {
   const [reportType, setReportType] = useState<'budget' | 'department'>('budget');
@@ -33,6 +34,52 @@ const ReportsPage = () => {
   );
 
   const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16', '#f97316', '#a855f7'];
+
+  // Table sorting for Budget Report Projects
+  const { sortedData: sortedBudgetProjects, SortableHeader: BudgetProjectSortableHeader } = useTableSort({
+    data: budgetReport?.projects || [],
+    getValue: (item: any, field: string) => {
+      const utilization = item.budget ? ((item.totalCost || 0) / item.budget) * 100 : 0;
+      const remaining = (item.budget || 0) - (item.totalCost || 0);
+      switch (field) {
+        case 'project':
+          return item.name || item.code || '';
+        case 'budget':
+          return item.budget || 0;
+        case 'spent':
+          return item.totalCost || 0;
+        case 'remaining':
+          return remaining;
+        case 'utilization':
+          return utilization;
+        case 'status':
+          return item.status || '';
+        default:
+          return (item as any)[field];
+      }
+    },
+  });
+
+  // Table sorting for Department Report
+  const { sortedData: sortedDepartments, SortableHeader: DepartmentSortableHeader } = useTableSort({
+    data: departmentReport?.departments || [],
+    getValue: (item: any, field: string) => {
+      switch (field) {
+        case 'department':
+          return item.name || '';
+        case 'head':
+          return item.head ? `${item.head.firstName || ''} ${item.head.lastName || ''}`.trim() : 'N/A';
+        case 'projects':
+          return item.projectCount || 0;
+        case 'budget':
+          return item.totalBudget || 0;
+        case 'spent':
+          return item.totalSpent || 0;
+        default:
+          return (item as any)[field];
+      }
+    },
+  });
 
   return (
     <div className="space-y-6 pb-8">
@@ -204,16 +251,16 @@ const ReportsPage = () => {
                     <table className="min-w-full divide-y divide-gray-200">
                       <thead className="bg-gray-50">
                         <tr>
-                          <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Project</th>
-                          <th className="px-4 py-3 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider">Budget</th>
-                          <th className="px-4 py-3 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider">Spent</th>
-                          <th className="px-4 py-3 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider">Remaining</th>
-                          <th className="px-4 py-3 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider">Utilization</th>
-                          <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Status</th>
+                          <BudgetProjectSortableHeader field="project">Project</BudgetProjectSortableHeader>
+                          <BudgetProjectSortableHeader field="budget" className="text-right">Budget</BudgetProjectSortableHeader>
+                          <BudgetProjectSortableHeader field="spent" className="text-right">Spent</BudgetProjectSortableHeader>
+                          <BudgetProjectSortableHeader field="remaining" className="text-right">Remaining</BudgetProjectSortableHeader>
+                          <BudgetProjectSortableHeader field="utilization" className="text-right">Utilization</BudgetProjectSortableHeader>
+                          <BudgetProjectSortableHeader field="status">Status</BudgetProjectSortableHeader>
                         </tr>
                       </thead>
                       <tbody className="bg-white divide-y divide-gray-200">
-                        {budgetReport.projects.map((project: any) => {
+                        {sortedBudgetProjects.map((project: any) => {
                           const utilization = project.budget ? ((project.totalCost || 0) / project.budget) * 100 : 0;
                           const isOverBudget = (project.totalCost || 0) > project.budget;
                           const remaining = (project.budget || 0) - (project.totalCost || 0);
@@ -442,15 +489,15 @@ const ReportsPage = () => {
                   <table className="min-w-full divide-y divide-gray-200">
                     <thead className="bg-gray-50">
                       <tr>
-                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Department</th>
-                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Head</th>
-                        <th className="px-4 py-3 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider">Projects</th>
-                        <th className="px-4 py-3 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider">Budget</th>
-                        <th className="px-4 py-3 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider">Spent</th>
+                        <DepartmentSortableHeader field="department">Department</DepartmentSortableHeader>
+                        <DepartmentSortableHeader field="head">Head</DepartmentSortableHeader>
+                        <DepartmentSortableHeader field="projects" className="text-right">Projects</DepartmentSortableHeader>
+                        <DepartmentSortableHeader field="budget" className="text-right">Budget</DepartmentSortableHeader>
+                        <DepartmentSortableHeader field="spent" className="text-right">Spent</DepartmentSortableHeader>
                       </tr>
                     </thead>
                     <tbody className="bg-white divide-y divide-gray-200">
-                      {departmentReport.departments.map((dept: any) => (
+                      {sortedDepartments.map((dept: any) => (
                         <tr key={dept.id} className="hover:bg-gray-50 transition-colors">
                           <td className="px-4 py-4 whitespace-nowrap">
                             <span className="font-semibold text-gray-900">{dept.name}</span>

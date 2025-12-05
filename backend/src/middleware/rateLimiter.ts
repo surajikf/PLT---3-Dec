@@ -1,10 +1,13 @@
 import rateLimit from 'express-rate-limit';
 import { Request, Response } from 'express';
 
+// Check if we're in development mode
+const isDevelopment = process.env.NODE_ENV === 'development';
+
 // General API rate limiter
 export const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per windowMs
+  max: isDevelopment ? 5000 : 100, // Very high limit in development to prevent 429 errors
   message: {
     success: false,
     error: 'Too many requests from this IP, please try again later.',
@@ -41,7 +44,7 @@ export const authLimiter = rateLimit({
 // Moderate rate limiter for write operations
 export const writeLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 50, // Limit each IP to 50 write requests per windowMs
+  max: isDevelopment ? 500 : 50, // Much higher limit in development
   message: {
     success: false,
     error: 'Too many write requests, please try again later.',
@@ -59,7 +62,7 @@ export const writeLimiter = rateLimit({
 // Lenient rate limiter for read operations
 export const readLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 200, // Limit each IP to 200 read requests per windowMs
+  max: isDevelopment ? 10000 : 200, // Very high limit in development to prevent 429 errors
   message: {
     success: false,
     error: 'Too many read requests, please try again later.',

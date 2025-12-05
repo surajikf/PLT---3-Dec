@@ -1,6 +1,6 @@
 import { useQuery, useMutation } from 'react-query';
 import api from '../services/api';
-import { Plus, Clock, Calendar, FileText, CheckCircle, XCircle, Loader2, Filter, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, Clock, Calendar, FileText, CheckCircle, XCircle, Loader2, Filter, ChevronLeft, ChevronRight, X, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { useState, useMemo, useEffect } from 'react';
 import { authService } from '../services/authService';
 import { UserRole } from '../utils/roles';
@@ -8,6 +8,7 @@ import toast from 'react-hot-toast';
 import { formatCurrency } from '../utils/currency';
 import { format } from 'date-fns';
 import Breadcrumbs from '../components/Breadcrumbs';
+import { useTableSort } from '../utils/tableSort';
 
 // Helper function to extract task name from description
 const extractTaskName = (description: string | null | undefined): string => {
@@ -61,6 +62,24 @@ const TimesheetsPage = () => {
   const [statusFilter, setStatusFilter] = useState('');
   const [projectFilter, setProjectFilter] = useState('');
   const [selectedTimesheets, setSelectedTimesheets] = useState<Set<string>>(new Set());
+  
+  // Approval/Rejection Modal State
+  const [approvalModal, setApprovalModal] = useState<{
+    isOpen: boolean;
+    type: 'approve' | 'reject' | null;
+    timesheetId: string | null;
+    timesheetIds: string[];
+    isBulk: boolean;
+    reason: string;
+  }>({
+    isOpen: false,
+    type: null,
+    timesheetId: null,
+    timesheetIds: [],
+    isBulk: false,
+    reason: '',
+  });
+
   const [formData, setFormData] = useState({
     projectId: '',
     taskId: '',
@@ -100,6 +119,31 @@ const TimesheetsPage = () => {
 
   const timesheets = data?.data || [];
   const paginationInfo = data?.pagination || { page: 1, limit: pageSize, total: 0, pages: 1 };
+
+  // Table sorting
+  const { sortedData: sortedTimesheets, SortableHeader } = useTableSort({
+    data: timesheets,
+    getValue: (item: any, field: string) => {
+      switch (field) {
+        case 'date':
+          return new Date(item.date).getTime();
+        case 'employee':
+          return item.user ? `${item.user.firstName || ''} ${item.user.lastName || ''}`.trim() || item.user.email || 'N/A' : 'N/A';
+        case 'project':
+          return item.project?.name || 'N/A';
+        case 'task':
+          return extractTaskName(item.description) || 'N/A';
+        case 'hours':
+          return item.hours || 0;
+        case 'cost':
+          return item.cost || 0;
+        case 'status':
+          return item.status || '';
+        default:
+          return (item as any)[field];
+      }
+    },
+  });
 
   const { data: projectsData } = useQuery('projects-for-timesheets', async () => {
     const res = await api.get('/projects');
@@ -211,28 +255,221 @@ const TimesheetsPage = () => {
     });
   };
 
-  const handleApprove = async (id: string) => {
+  const handleApprove = (id: string) => {
+    setApprovalModal({
+      isOpen: true,
+      type: 'approve',
+      timesheetId: id,
+      timesheetIds: [],
+      isBulk: false,
+      reason: '',
+    });
+  };
+
+  const handleReject = (id: string) => {
+    setApprovalModal({
+      isOpen: true,
+      type: 'reject',
+      timesheetId: id,
+      timesheetIds: [],
+      isBulk: false,
+      reason: '',
+    });
+  };
+
+  const handleBulkApproveClick = async () => {
+    if (selectedTimesheets.size === 0) {
+      toast.error('Please select at least one timesheet');
+      return;
+    }
+
+    // First, refresh the data to ensure we have the latest status
+    await refetch();
+
+    // Filter to only include SUBMITTED timesheets that still exist in current data
+    const submittedIds = timesheets
+      .filter((ts: any) => selectedTimesheets.has(ts.id) && ts.status === 'SUBMITTED')
+      .map((ts: any) => ts.id);
+
+    // Also check for selected IDs that are not in the current timesheets array
+    const selectedIds = Array.from(selectedTimesheets);
+    const foundIds = timesheets.map((ts: any) => ts.id);
+    const notFoundIds = selectedIds.filter((id: string) => !foundIds.includes(id));
+
+    if (submittedIds.length === 0) {
+      // Check if any selected timesheets exist but are not in SUBMITTED status
+      const selectedButNotSubmitted = timesheets.filter(
+        (ts: any) => selectedTimesheets.has(ts.id) && ts.status !== 'SUBMITTED'
+      );
+      
+      let errorMsg = '';
+      if (notFoundIds.length > 0) {
+        errorMsg = `${notFoundIds.length} selected timesheet(s) no longer exist. `;
+      }
+      if (selectedButNotSubmitted.length > 0) {
+        const statusCounts: Record<string, number> = {};
+        selectedButNotSubmitted.forEach((ts: any) => {
+          statusCounts[ts.status] = (statusCounts[ts.status] || 0) + 1;
+        });
+        const statusMsg = Object.entries(statusCounts)
+          .map(([status, count]) => `${count} ${status.toLowerCase()}`)
+          .join(', ');
+        errorMsg += `Selected timesheets are not in submitted status: ${statusMsg}.`;
+      } else if (notFoundIds.length === 0) {
+        errorMsg = 'No submitted timesheets found in selection. The selected timesheets may have been removed or already processed.';
+      }
+      
+      toast.error(errorMsg + ' Please refresh and select only submitted timesheets.', { duration: 5000 });
+      setSelectedTimesheets(new Set());
+      return;
+    }
+
+    // If some selected timesheets are not in SUBMITTED status, warn the user
+    if (submittedIds.length < selectedTimesheets.size) {
+      const skippedCount = selectedTimesheets.size - submittedIds.length;
+      toast.error(`${skippedCount} selected timesheet(s) are not in submitted status and will be skipped.`, { duration: 4000 });
+    }
+
+    // Update selection to only include valid submitted IDs
+    setSelectedTimesheets(new Set(submittedIds));
+
+    setApprovalModal({
+      isOpen: true,
+      type: 'approve',
+      timesheetId: null,
+      timesheetIds: submittedIds,
+      isBulk: true,
+      reason: '',
+    });
+  };
+
+  const handleBulkRejectClick = async () => {
+    if (selectedTimesheets.size === 0) {
+      toast.error('Please select at least one timesheet');
+      return;
+    }
+
+    // First, refresh the data to ensure we have the latest status
+    await refetch();
+
+    // Filter to only include SUBMITTED timesheets that still exist in current data
+    const submittedIds = timesheets
+      .filter((ts: any) => selectedTimesheets.has(ts.id) && ts.status === 'SUBMITTED')
+      .map((ts: any) => ts.id);
+
+    // Also check for selected IDs that are not in the current timesheets array
+    const selectedIds = Array.from(selectedTimesheets);
+    const foundIds = timesheets.map((ts: any) => ts.id);
+    const notFoundIds = selectedIds.filter((id: string) => !foundIds.includes(id));
+
+    if (submittedIds.length === 0) {
+      // Check if any selected timesheets exist but are not in SUBMITTED status
+      const selectedButNotSubmitted = timesheets.filter(
+        (ts: any) => selectedTimesheets.has(ts.id) && ts.status !== 'SUBMITTED'
+      );
+      
+      let errorMsg = '';
+      if (notFoundIds.length > 0) {
+        errorMsg = `${notFoundIds.length} selected timesheet(s) no longer exist. `;
+      }
+      if (selectedButNotSubmitted.length > 0) {
+        const statusCounts: Record<string, number> = {};
+        selectedButNotSubmitted.forEach((ts: any) => {
+          statusCounts[ts.status] = (statusCounts[ts.status] || 0) + 1;
+        });
+        const statusMsg = Object.entries(statusCounts)
+          .map(([status, count]) => `${count} ${status.toLowerCase()}`)
+          .join(', ');
+        errorMsg += `Selected timesheets are not in submitted status: ${statusMsg}.`;
+      } else if (notFoundIds.length === 0) {
+        errorMsg = 'No submitted timesheets found in selection. The selected timesheets may have been removed or already processed.';
+      }
+      
+      toast.error(errorMsg + ' Please refresh and select only submitted timesheets.', { duration: 5000 });
+      setSelectedTimesheets(new Set());
+      return;
+    }
+
+    // If some selected timesheets are not in SUBMITTED status, warn the user
+    if (submittedIds.length < selectedTimesheets.size) {
+      const skippedCount = selectedTimesheets.size - submittedIds.length;
+      toast.error(`${skippedCount} selected timesheet(s) are not in submitted status and will be skipped.`, { duration: 4000 });
+    }
+
+    // Update selection to only include valid submitted IDs
+    setSelectedTimesheets(new Set(submittedIds));
+
+    setApprovalModal({
+      isOpen: true,
+      type: 'reject',
+      timesheetId: null,
+      timesheetIds: submittedIds,
+      isBulk: true,
+      reason: '',
+    });
+  };
+
+  const confirmApproval = async () => {
     try {
-      await api.post(`/timesheets/${id}/approve`);
-      toast.success('Timesheet approved');
+      if (approvalModal.isBulk) {
+        const response = await api.post('/timesheets/bulk/approve', {
+          ids: approvalModal.timesheetIds,
+        });
+        const data = response.data.data;
+        let message = `Successfully approved ${data.approved} timesheet(s)`;
+        if (data.skipped > 0 || data.notFound > 0) {
+          const parts = [];
+          if (data.skipped > 0) parts.push(`${data.skipped} skipped`);
+          if (data.notFound > 0) parts.push(`${data.notFound} not found`);
+          message += ` (${parts.join(', ')})`;
+        }
+        toast.success(message);
+        setSelectedTimesheets(new Set());
+      } else if (approvalModal.timesheetId) {
+        await api.post(`/timesheets/${approvalModal.timesheetId}/approve`);
+        toast.success('Timesheet approved');
+      }
+      setApprovalModal({ isOpen: false, type: null, timesheetId: null, timesheetIds: [], isBulk: false, reason: '' });
       refetch();
     } catch (error: any) {
-      const errorMessage = error.userMessage || error.response?.data?.error || 'Failed to approve timesheet';
+      const errorMessage = error.userMessage || error.response?.data?.error || 'Failed to approve timesheet(s)';
       toast.error(errorMessage);
     }
   };
 
-  const handleReject = async (id: string) => {
-    const reason = prompt('Reason for rejection:');
-    if (reason) {
-      try {
-        await api.post(`/timesheets/${id}/reject`, { reason });
+  const confirmRejection = async () => {
+    if (!approvalModal.reason.trim()) {
+      toast.error('Please provide a reason for rejection');
+      return;
+    }
+
+    try {
+      if (approvalModal.isBulk) {
+        const response = await api.post('/timesheets/bulk/reject', {
+          ids: approvalModal.timesheetIds,
+          reason: approvalModal.reason.trim(),
+        });
+        const data = response.data.data;
+        let message = `Successfully rejected ${data.rejected} timesheet(s)`;
+        if (data.skipped > 0 || data.notFound > 0) {
+          const parts = [];
+          if (data.skipped > 0) parts.push(`${data.skipped} skipped`);
+          if (data.notFound > 0) parts.push(`${data.notFound} not found`);
+          message += ` (${parts.join(', ')})`;
+        }
+        toast.success(message);
+        setSelectedTimesheets(new Set());
+      } else if (approvalModal.timesheetId) {
+        await api.post(`/timesheets/${approvalModal.timesheetId}/reject`, { 
+          reason: approvalModal.reason.trim() 
+        });
         toast.success('Timesheet rejected');
-        refetch();
-      } catch (error: any) {
-        const errorMessage = error.userMessage || error.response?.data?.error || 'Failed to reject timesheet';
-        toast.error(errorMessage);
       }
+      setApprovalModal({ isOpen: false, type: null, timesheetId: null, timesheetIds: [], isBulk: false, reason: '' });
+      refetch();
+    } catch (error: any) {
+      const errorMessage = error.userMessage || error.response?.data?.error || 'Failed to reject timesheet(s)';
+      toast.error(errorMessage);
     }
   };
 
@@ -264,88 +501,6 @@ const TimesheetsPage = () => {
     setSelectedTimesheets(newSelected);
   };
 
-  const handleBulkApprove = async () => {
-    if (selectedTimesheets.size === 0) {
-      toast.error('Please select at least one timesheet');
-      return;
-    }
-
-    // Filter to only include SUBMITTED timesheets
-    const submittedIds = timesheets
-      .filter((ts: any) => selectedTimesheets.has(ts.id) && ts.status === 'SUBMITTED')
-      .map((ts: any) => ts.id);
-
-    if (submittedIds.length === 0) {
-      toast.error('Please select only submitted timesheets. Only submitted timesheets can be approved.');
-      // Clear selection of non-submitted timesheets
-      setSelectedTimesheets(new Set());
-      return;
-    }
-
-    // If some selected timesheets are not submitted, warn the user
-    if (submittedIds.length < selectedTimesheets.size) {
-      const nonSubmittedCount = selectedTimesheets.size - submittedIds.length;
-      toast.error(`${nonSubmittedCount} selected timesheet(s) are not in submitted status and will be skipped.`);
-    }
-
-    try {
-      const response = await api.post('/timesheets/bulk/approve', {
-        ids: submittedIds,
-      });
-      toast.success(`Successfully approved ${response.data.data.approved} timesheet(s)`);
-      setSelectedTimesheets(new Set());
-      refetch();
-    } catch (error: any) {
-      const errorMessage = error.userMessage || error.response?.data?.error || 'Failed to approve timesheets';
-      toast.error(errorMessage);
-      // Clear selection on error
-      setSelectedTimesheets(new Set());
-    }
-  };
-
-  const handleBulkReject = async () => {
-    if (selectedTimesheets.size === 0) {
-      toast.error('Please select at least one timesheet');
-      return;
-    }
-
-    // Filter to only include SUBMITTED timesheets
-    const submittedIds = timesheets
-      .filter((ts: any) => selectedTimesheets.has(ts.id) && ts.status === 'SUBMITTED')
-      .map((ts: any) => ts.id);
-
-    if (submittedIds.length === 0) {
-      toast.error('Please select only submitted timesheets. Only submitted timesheets can be rejected.');
-      // Clear selection of non-submitted timesheets
-      setSelectedTimesheets(new Set());
-      return;
-    }
-
-    // If some selected timesheets are not submitted, warn the user
-    if (submittedIds.length < selectedTimesheets.size) {
-      const nonSubmittedCount = selectedTimesheets.size - submittedIds.length;
-      toast.error(`${nonSubmittedCount} selected timesheet(s) are not in submitted status and will be skipped.`);
-    }
-
-    if (!confirm(`Are you sure you want to reject ${submittedIds.length} timesheet(s)?`)) {
-      return;
-    }
-
-    try {
-      const response = await api.post('/timesheets/bulk/reject', {
-        ids: submittedIds,
-        reason: 'Bulk rejected by manager',
-      });
-      toast.success(`Successfully rejected ${response.data.data.rejected} timesheet(s)`);
-      setSelectedTimesheets(new Set());
-      refetch();
-    } catch (error: any) {
-      const errorMessage = error.userMessage || error.response?.data?.error || 'Failed to reject timesheets';
-      toast.error(errorMessage);
-      // Clear selection on error
-      setSelectedTimesheets(new Set());
-    }
-  };
 
   // Check if all selectable timesheets are selected
   const selectableTimesheets = timesheets.filter((ts: any) => ts.status === 'SUBMITTED');
@@ -353,17 +508,24 @@ const TimesheetsPage = () => {
     selectableTimesheets.every((ts: any) => selectedTimesheets.has(ts.id));
   const someSelected = selectedTimesheets.size > 0 && !allSelected;
 
-  // Clean up selection: remove any timesheets that are no longer SUBMITTED
+  // Clean up selection: remove any timesheets that are no longer SUBMITTED or don't exist
   // This handles cases where status changes or timesheets are filtered out
   useEffect(() => {
+    if (selectedTimesheets.size === 0) return;
+    
     const validSelected = timesheets
       .filter((ts: any) => selectedTimesheets.has(ts.id) && ts.status === 'SUBMITTED')
       .map((ts: any) => ts.id);
     
     if (validSelected.length !== selectedTimesheets.size) {
+      const removedCount = selectedTimesheets.size - validSelected.length;
+      if (removedCount > 0 && validSelected.length > 0) {
+        // Only show warning if there are still valid selections
+        toast.error(`${removedCount} selected timesheet(s) are no longer in submitted status and were removed from selection.`, { duration: 3000 });
+      }
       setSelectedTimesheets(new Set(validSelected));
     }
-  }, [timesheets]);
+  }, [timesheets, selectedTimesheets.size]);
 
   const canApprove = user && [UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER].includes(user.role as UserRole);
 
@@ -705,14 +867,14 @@ const TimesheetsPage = () => {
             </div>
             <div className="flex items-center gap-2">
               <button
-                onClick={handleBulkApprove}
+                onClick={handleBulkApproveClick}
                 className="btn btn-primary inline-flex items-center"
               >
                 <CheckCircle className="w-4 h-4 mr-2" />
                 Approve Selected
               </button>
               <button
-                onClick={handleBulkReject}
+                onClick={handleBulkRejectClick}
                 className="btn btn-secondary inline-flex items-center bg-red-600 hover:bg-red-700 text-white"
               >
                 <XCircle className="w-4 h-4 mr-2" />
@@ -821,23 +983,23 @@ const TimesheetsPage = () => {
                         />
                       </th>
                     )}
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Date</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Employee</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Project</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Task Name</th>
+                    <SortableHeader field="date">Date</SortableHeader>
+                    <SortableHeader field="employee">Employee</SortableHeader>
+                    <SortableHeader field="project">Project</SortableHeader>
+                    <SortableHeader field="task">Task Name</SortableHeader>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Description</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Hours</th>
+                    <SortableHeader field="hours">Hours</SortableHeader>
                     {canApprove && (
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Cost</th>
+                      <SortableHeader field="cost">Cost</SortableHeader>
                     )}
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Status</th>
+                    <SortableHeader field="status">Status</SortableHeader>
                     {canApprove && (
                       <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Actions</th>
                     )}
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {timesheets.map((timesheet: any) => (
+                  {sortedTimesheets.map((timesheet: any) => (
                   <tr key={timesheet.id} className={`hover:bg-primary-50/30 transition-colors duration-150 ${selectedTimesheets.has(timesheet.id) ? 'bg-primary-50' : ''}`}>
                     {canApprove && (
                       <td className="px-4 py-4 whitespace-nowrap">
@@ -1011,6 +1173,111 @@ const TimesheetsPage = () => {
           </div>
         )}
       </div>
+
+      {/* Approval/Rejection Modal */}
+      {approvalModal.isOpen && (
+        <div className="fixed inset-0 z-50 overflow-y-auto" aria-labelledby="modal-title" role="dialog" aria-modal="true">
+          <div className="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+            {/* Background overlay */}
+            <div 
+              className="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"
+              onClick={() => setApprovalModal({ isOpen: false, type: null, timesheetId: null, timesheetIds: [], isBulk: false, reason: '' })}
+            ></div>
+
+            {/* Modal panel */}
+            <div className="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
+              <div className="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+                <div className="flex items-start justify-between mb-4">
+                  <div className="flex items-center gap-3">
+                    {approvalModal.type === 'approve' ? (
+                      <div className="flex-shrink-0 mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-green-100">
+                        <CheckCircle2 className="h-6 w-6 text-green-600" />
+                      </div>
+                    ) : (
+                      <div className="flex-shrink-0 mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-red-100">
+                        <XCircle className="h-6 w-6 text-red-600" />
+                      </div>
+                    )}
+                    <div>
+                      <h3 className="text-lg font-medium text-gray-900" id="modal-title">
+                        {approvalModal.type === 'approve' 
+                          ? approvalModal.isBulk 
+                            ? `Approve ${approvalModal.timesheetIds.length} Timesheet(s)` 
+                            : 'Approve Timesheet'
+                          : approvalModal.isBulk
+                            ? `Reject ${approvalModal.timesheetIds.length} Timesheet(s)`
+                            : 'Reject Timesheet'
+                        }
+                      </h3>
+                      <p className="text-sm text-gray-500 mt-1">
+                        {approvalModal.type === 'approve'
+                          ? approvalModal.isBulk
+                            ? `Are you sure you want to approve ${approvalModal.timesheetIds.length} selected timesheet(s)?`
+                            : 'Are you sure you want to approve this timesheet?'
+                          : approvalModal.isBulk
+                            ? `Please provide a reason for rejecting ${approvalModal.timesheetIds.length} timesheet(s).`
+                            : 'Please provide a reason for rejecting this timesheet.'
+                        }
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setApprovalModal({ isOpen: false, type: null, timesheetId: null, timesheetIds: [], isBulk: false, reason: '' })}
+                    className="text-gray-400 hover:text-gray-500 transition-colors"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                {approvalModal.type === 'reject' && (
+                  <div className="mt-4">
+                    <label htmlFor="rejection-reason" className="block text-sm font-medium text-gray-700 mb-2">
+                      Reason for Rejection <span className="text-red-500">*</span>
+                    </label>
+                    <textarea
+                      id="rejection-reason"
+                      rows={4}
+                      value={approvalModal.reason}
+                      onChange={(e) => setApprovalModal(prev => ({ ...prev, reason: e.target.value }))}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+                      placeholder="Enter the reason for rejection..."
+                      required
+                    />
+                    {!approvalModal.reason.trim() && (
+                      <p className="mt-1 text-xs text-red-600 flex items-center gap-1">
+                        <AlertCircle className="w-3 h-3" />
+                        A reason is required for rejection
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div className="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse gap-3">
+                <button
+                  type="button"
+                  onClick={approvalModal.type === 'approve' ? confirmApproval : confirmRejection}
+                  disabled={approvalModal.type === 'reject' && !approvalModal.reason.trim()}
+                  className={`w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 text-base font-medium text-white sm:ml-3 sm:w-auto sm:text-sm ${
+                    approvalModal.type === 'approve'
+                      ? 'bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500'
+                      : 'bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 disabled:opacity-50 disabled:cursor-not-allowed'
+                  }`}
+                >
+                  {approvalModal.type === 'approve' ? 'Approve' : 'Reject'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setApprovalModal({ isOpen: false, type: null, timesheetId: null, timesheetIds: [], isBulk: false, reason: '' })}
+                  className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from 'react-query';
 import api from '../services/api';
-import { ExternalLink, Plus, Edit, Trash2, X, Save, Link as LinkIcon, Loader2 } from 'lucide-react';
+import { ExternalLink, Plus, Edit, Trash2, X, Save, Link as LinkIcon, Loader2, RefreshCw } from 'lucide-react';
 import { useState } from 'react';
 import { authService } from '../services/authService';
 import { UserRole } from '../utils/roles';
@@ -26,9 +26,12 @@ const ResourcesPage = () => {
     onConfirm: () => {},
   });
 
-  const { data, isLoading } = useQuery('resources', async () => {
+  const { data, isLoading, refetch, isRefetching } = useQuery('resources', async () => {
     const res = await api.get('/resources');
     return res.data.data;
+  }, {
+    refetchOnWindowFocus: true,
+    staleTime: 0, // Always refetch when needed
   });
 
   const { data: projects } = useQuery('projects-for-resources', async () => {
@@ -72,18 +75,32 @@ const ResourcesPage = () => {
           <h1 className="text-3xl font-bold text-gray-900">Resources</h1>
           <p className="mt-1 text-sm text-gray-500">Access and manage project resources and documents</p>
         </div>
-        {canManage && (
+        <div className="flex items-center gap-2">
           <button
             onClick={() => {
-              setEditingResource(null);
-              setResourceModalOpen(true);
+              refetch();
+              toast.success('Refreshing resources...');
             }}
-            className="btn btn-primary inline-flex items-center"
+            disabled={isRefetching}
+            className="btn btn-secondary inline-flex items-center"
+            title="Refresh resources"
           >
-            <Plus className="w-5 h-5 mr-2" />
-            Add Resource
+            <RefreshCw className={`w-4 h-4 mr-2 ${isRefetching ? 'animate-spin' : ''}`} />
+            Refresh
           </button>
-        )}
+          {canManage && (
+            <button
+              onClick={() => {
+                setEditingResource(null);
+                setResourceModalOpen(true);
+              }}
+              className="btn btn-primary inline-flex items-center"
+            >
+              <Plus className="w-5 h-5 mr-2" />
+              Add Resource
+            </button>
+          )}
+        </div>
       </div>
 
       {isLoading ? (

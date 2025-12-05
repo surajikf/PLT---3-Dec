@@ -186,6 +186,7 @@ export const getProjectById = async (req: AuthRequest, res: Response, next: Next
                 firstName: true,
                 lastName: true,
                 email: true,
+                role: true,
                 hourlyRate: true,
               },
             },

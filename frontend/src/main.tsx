@@ -8,13 +8,14 @@ import './index.css';
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 5 * 60 * 1000, // 5 minutes - data is fresh for 5 minutes
-      cacheTime: 10 * 60 * 1000, // 10 minutes - cache persists for 10 minutes
-      refetchOnWindowFocus: false,
+      staleTime: process.env.NODE_ENV === 'development' ? 0 : 5 * 60 * 1000, // 0 in dev, 5 minutes in production
+      cacheTime: process.env.NODE_ENV === 'development' ? 0 : 10 * 60 * 1000, // 0 in dev, 10 minutes in production
+      refetchOnWindowFocus: process.env.NODE_ENV === 'development' ? true : false, // Refetch on focus in dev
       refetchOnMount: true,
       refetchOnReconnect: true,
-      retry: 2, // Retry failed requests 2 times
+      retry: 3, // Retry failed requests 3 times
       retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000), // Exponential backoff
+      networkMode: 'online', // Only retry when online
     },
     mutations: {
       retry: 1,

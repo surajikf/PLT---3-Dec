@@ -26,11 +26,12 @@ router.post(
   ]),
   createTimesheet
 );
+// Bulk routes must come BEFORE parameterized routes to avoid route matching conflicts
+router.post('/bulk/approve', authorize('SUPER_ADMIN', 'ADMIN', 'PROJECT_MANAGER'), bulkApproveTimesheets);
+router.post('/bulk/reject', authorize('SUPER_ADMIN', 'ADMIN', 'PROJECT_MANAGER'), bulkRejectTimesheets);
 router.patch('/:id', updateTimesheet);
 router.post('/:id/approve', authorize('SUPER_ADMIN', 'ADMIN', 'PROJECT_MANAGER'), approveTimesheet);
 router.post('/:id/reject', authorize('SUPER_ADMIN', 'ADMIN', 'PROJECT_MANAGER'), rejectTimesheet);
-router.post('/bulk/approve', authorize('SUPER_ADMIN', 'ADMIN', 'PROJECT_MANAGER'), bulkApproveTimesheets);
-router.post('/bulk/reject', authorize('SUPER_ADMIN', 'ADMIN', 'PROJECT_MANAGER'), bulkRejectTimesheets);
 
 export default router;
 

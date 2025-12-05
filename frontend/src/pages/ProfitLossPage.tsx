@@ -6,6 +6,7 @@ import { formatCurrency, formatCurrencyTooltip } from '../utils/currency';
 import { Link } from 'react-router-dom';
 import { useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
+import { useTableSort } from '../utils/tableSort';
 
 const COLORS = ['#10b981', '#ef4444', '#3b82f6', '#f59e0b', '#8b5cf6'];
 
@@ -14,29 +15,53 @@ const ProfitLossPage = () => {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
 
   // Fetch P&L Dashboard
-  const { data: dashboardData, isLoading: dashboardLoading } = useQuery(
+  const { data: dashboardData, isLoading: dashboardLoading, error: dashboardError, refetch: refetchDashboard } = useQuery(
     'profit-loss-dashboard',
     async () => {
       const res = await api.get('/profit-loss/dashboard');
       return res.data.data;
+    },
+    {
+      retry: 2,
+      retryDelay: 1000,
+      staleTime: 2 * 60 * 1000, // 2 minutes
+      onError: (error: any) => {
+        console.error('Error fetching profit-loss dashboard:', error);
+      },
     }
   );
 
   // Fetch all projects P&L
-  const { data: projectsData, isLoading: projectsLoading } = useQuery(
+  const { data: projectsData, isLoading: projectsLoading, error: projectsError, refetch: refetchProjects } = useQuery(
     'all-projects-profit-loss',
     async () => {
       const res = await api.get('/profit-loss/projects');
       return res.data.data;
+    },
+    {
+      retry: 2,
+      retryDelay: 1000,
+      staleTime: 2 * 60 * 1000, // 2 minutes
+      onError: (error: any) => {
+        console.error('Error fetching projects profit-loss:', error);
+      },
     }
   );
 
   // Fetch employee cost analysis
-  const { data: employeesData, isLoading: employeesLoading } = useQuery(
+  const { data: employeesData, isLoading: employeesLoading, error: employeesError, refetch: refetchEmployees } = useQuery(
     'employee-cost-analysis',
     async () => {
       const res = await api.get('/profit-loss/employees');
       return res.data.data;
+    },
+    {
+      retry: 2,
+      retryDelay: 1000,
+      staleTime: 2 * 60 * 1000, // 2 minutes
+      onError: (error: any) => {
+        console.error('Error fetching employee cost analysis:', error);
+      },
     }
   );
 
@@ -51,10 +76,91 @@ const ProfitLossPage = () => {
     { enabled: !!selectedProjectId }
   );
 
+  // Helper function to extract error message
+  const getErrorMessage = (error: any): string => {
+    if (!error) return '';
+    if (error.response?.data?.error) return error.response.data.error;
+    if (error.response?.data?.message) return error.response.data.message;
+    if (error.message) return error.message;
+    if (typeof error === 'string') return error;
+    return 'An unknown error occurred';
+  };
+
+  // Check for errors
+  const hasError = dashboardError || projectsError || employeesError;
+  const errorMessage = 
+    getErrorMessage(dashboardError) || 
+    getErrorMessage(projectsError) || 
+    getErrorMessage(employeesError) || 
+    'Failed to load profit & loss data';
+
   if (dashboardLoading || projectsLoading || employeesLoading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <p className="text-gray-500">Loading profit & loss data...</p>
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900">Profit & Loss Management</h1>
+            <p className="mt-2 text-gray-600">Track project costs, employee expenses, and financial performance</p>
+          </div>
+        </div>
+        <div className="flex items-center justify-center h-64">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto mb-4"></div>
+            <p className="text-gray-500">Loading profit & loss data...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (hasError) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900">Profit & Loss Management</h1>
+            <p className="mt-2 text-gray-600">Track project costs, employee expenses, and financial performance</p>
+          </div>
+        </div>
+        <div className="card border-red-200 bg-red-50">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-red-100 rounded-lg">
+              <TrendingDown className="w-6 h-6 text-red-600" />
+            </div>
+            <div className="flex-1">
+              <h3 className="text-lg font-semibold text-red-900">Error Loading Data</h3>
+              <p className="text-sm text-red-700 mt-1">
+                {errorMessage}
+              </p>
+              <p className="text-xs text-red-600 mt-2">
+                Please check your connection and try refreshing the page. If the problem persists, contact support.
+              </p>
+              {(errorMessage.includes('Access denied') || errorMessage.includes('administrators')) && (
+                <p className="text-xs text-red-600 mt-2 font-medium">
+                  Note: Only Super Admin and Admin roles can access Profit & Loss data.
+                </p>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  refetchDashboard();
+                  refetchProjects();
+                  refetchEmployees();
+                }}
+                className="btn btn-secondary"
+              >
+                Retry
+              </button>
+              <button
+                onClick={() => window.location.reload()}
+                className="btn btn-primary"
+              >
+                Refresh Page
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
     );
   }
@@ -63,14 +169,43 @@ const ProfitLossPage = () => {
   const projects = projectsData?.projects || [];
   const employees = employeesData || [];
 
+  // Table sorting for Projects
+  const { sortedData: sortedProjects, SortableHeader: ProjectSortableHeader } = useTableSort({
+    data: projects,
+    getValue: (item: any, field: string) => {
+      switch (field) {
+        case 'project':
+          return item.name || '';
+        case 'status':
+          return item.status || '';
+        case 'fixedCost':
+          return item.financials?.fixedProjectCost || 0;
+        case 'actualCost':
+          return item.financials?.totalActualCost || 0;
+        case 'hours':
+          return item.financials?.totalHours || 0;
+        case 'profitLoss':
+          return item.financials?.profitLoss || 0;
+        case 'margin':
+          return item.financials?.margin || 0;
+        default:
+          return (item as any)[field];
+      }
+    },
+  });
+
   // Prepare chart data
-  const profitLossChartData = projects.slice(0, 10).map((p: any) => ({
-    name: p.name.length > 15 ? p.name.substring(0, 15) + '...' : p.name,
-    profit: p.financials.profitLoss > 0 ? p.financials.profitLoss : 0,
-    loss: p.financials.profitLoss < 0 ? Math.abs(p.financials.profitLoss) : 0,
-    budget: p.financials.fixedProjectCost,
-    actual: p.financials.totalActualCost,
-  }));
+  const profitLossChartData = (projects || []).slice(0, 10).map((p: any) => {
+    const financials = p.financials || {};
+    const profitLoss = financials.profitLoss || 0;
+    return {
+      name: (p.name || '').length > 15 ? (p.name || '').substring(0, 15) + '...' : (p.name || ''),
+      profit: profitLoss > 0 ? profitLoss : 0,
+      loss: profitLoss < 0 ? Math.abs(profitLoss) : 0,
+      budget: financials.fixedProjectCost || 0,
+      actual: financials.totalActualCost || 0,
+    };
+  });
 
   const projectStatusData = [
     { name: 'Profit', value: summary.profitProjects || 0, fill: '#10b981' },
@@ -293,16 +428,16 @@ const ProfitLossPage = () => {
                     >
                       <div className="flex justify-between items-start">
                         <div className="flex-1">
-                          <p className="font-semibold text-gray-900">{project.name}</p>
-                          <p className="text-sm text-gray-500">{project.code}</p>
+                          <p className="font-semibold text-gray-900">{project.name || 'Unknown Project'}</p>
+                          <p className="text-sm text-gray-500">{project.code || 'N/A'}</p>
                         </div>
                         <div className="text-right">
                           <p className="font-bold text-red-600">
-                            {formatCurrency(project.profitLoss)}
+                            {formatCurrency(project.profitLoss || 0)}
                           </p>
                           <p className="text-xs text-gray-500">
-                            {project.budget > 0 
-                              ? `${((project.profitLoss / project.budget) * 100).toFixed(1)}%`
+                            {(project.budget || 0) > 0 
+                              ? `${(((project.profitLoss || 0) / project.budget) * 100).toFixed(1)}%`
                               : 'N/A'}
                           </p>
                         </div>
@@ -329,18 +464,18 @@ const ProfitLossPage = () => {
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Project</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Fixed Cost</th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actual Cost</th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Hours</th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Profit/Loss</th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Margin</th>
+                    <ProjectSortableHeader field="project">Project</ProjectSortableHeader>
+                    <ProjectSortableHeader field="status">Status</ProjectSortableHeader>
+                    <ProjectSortableHeader field="fixedCost" className="text-right">Fixed Cost</ProjectSortableHeader>
+                    <ProjectSortableHeader field="actualCost" className="text-right">Actual Cost</ProjectSortableHeader>
+                    <ProjectSortableHeader field="hours" className="text-right">Hours</ProjectSortableHeader>
+                    <ProjectSortableHeader field="profitLoss" className="text-right">Profit/Loss</ProjectSortableHeader>
+                    <ProjectSortableHeader field="margin" className="text-right">Margin</ProjectSortableHeader>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {projects.map((project: any) => (
+                  {sortedProjects.map((project: any) => (
                     <tr key={project.id} className="hover:bg-gray-50">
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div>
@@ -364,23 +499,23 @@ const ProfitLossPage = () => {
                         </span>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium text-gray-900">
-                        {formatCurrency(project.financials.fixedProjectCost || 0)}
+                        {formatCurrency((project.financials?.fixedProjectCost) || 0)}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-500">
-                        {formatCurrency(project.financials.totalActualCost || 0)}
+                        {formatCurrency((project.financials?.totalActualCost) || 0)}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-500">
-                        {(project.financials.totalHours || 0).toFixed(1)}
+                        {((project.financials?.totalHours) || 0).toFixed(1)}
                       </td>
                       <td className={`px-6 py-4 whitespace-nowrap text-right text-sm font-bold ${
-                        project.financials.profitLoss >= 0 ? 'text-green-600' : 'text-red-600'
+                        (project.financials?.profitLoss || 0) >= 0 ? 'text-green-600' : 'text-red-600'
                       }`}>
-                        {formatCurrency(project.financials.profitLoss || 0)}
+                        {formatCurrency((project.financials?.profitLoss) || 0)}
                       </td>
                       <td className={`px-6 py-4 whitespace-nowrap text-right text-sm ${
-                        project.financials.profitLossPercentage >= 0 ? 'text-green-600' : 'text-red-600'
+                        (project.financials?.profitLossPercentage || 0) >= 0 ? 'text-green-600' : 'text-red-600'
                       }`}>
-                        {project.financials.profitLossPercentage.toFixed(1)}%
+                        {((project.financials?.profitLossPercentage) || 0).toFixed(1)}%
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-left text-sm">
                         <button

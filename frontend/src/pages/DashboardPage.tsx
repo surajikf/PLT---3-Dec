@@ -16,7 +16,8 @@ import {
   AlertTriangle,
   Sparkles,
   ArrowUpRight,
-  ArrowDownRight
+  ArrowDownRight,
+  X
 } from 'lucide-react';
 import { RupeeIcon } from '../components/RupeeIcon';
 import { formatCurrency, formatCurrencyTooltip } from '../utils/currency';
@@ -44,6 +45,27 @@ const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'
 const DashboardPage = () => {
   const user = authService.getCurrentUser();
   const isEmployee = user?.role === UserRole.TEAM_MEMBER;
+  
+  // Track dismissed alerts (persist in localStorage)
+  const [dismissedAlerts, setDismissedAlerts] = useState<Set<string>>(() => {
+    try {
+      const stored = localStorage.getItem('dismissed-dashboard-alerts');
+      return stored ? new Set(JSON.parse(stored)) : new Set();
+    } catch {
+      return new Set();
+    }
+  });
+
+  const dismissAlert = (alertKey: string) => {
+    const newDismissed = new Set(dismissedAlerts);
+    newDismissed.add(alertKey);
+    setDismissedAlerts(newDismissed);
+    try {
+      localStorage.setItem('dismissed-dashboard-alerts', JSON.stringify(Array.from(newDismissed)));
+    } catch (error) {
+      console.error('Failed to save dismissed alerts:', error);
+    }
+  };
 
   // Fetch all data with error handling
   const { 
@@ -819,50 +841,72 @@ const DashboardPage = () => {
       {/* Optimized Insights Banner */}
       {dashboardData.insights && dashboardData.insights.length > 0 && (
         <div className="space-y-2">
-          {dashboardData.insights.map((insight: any, index: number) => {
-            const InsightIcon = insight.icon;
-            return (
-              <div
-                key={index}
-                className={`flex items-center justify-between px-4 py-3 rounded-lg border-l-4 ${
-                  insight.type === 'warning' ? 'border-yellow-500 bg-yellow-50' :
-                  insight.type === 'danger' ? 'border-red-500 bg-red-50' :
-                  insight.type === 'success' ? 'border-green-500 bg-green-50' :
-                  'border-blue-500 bg-blue-50'
-                }`}
-                role="alert"
-              >
-                <div className="flex items-center gap-3 flex-1">
-                  <InsightIcon className={`w-5 h-5 flex-shrink-0 ${
-                    insight.type === 'warning' ? 'text-yellow-600' :
-                    insight.type === 'danger' ? 'text-red-600' :
-                    insight.type === 'success' ? 'text-green-600' :
-                    'text-blue-600'
-                  }`} />
-                  <p className={`text-sm font-medium ${
-                    insight.type === 'warning' ? 'text-yellow-900' :
-                    insight.type === 'danger' ? 'text-red-900' :
-                    insight.type === 'success' ? 'text-green-900' :
-                    'text-blue-900'
-                  }`}>
-                    {insight.message}
-                  </p>
+          {dashboardData.insights
+            .filter((insight: any) => {
+              // Filter out dismissed alerts
+              const alertKey = `alert-${insight.message.replace(/\s+/g, '-').toLowerCase()}`;
+              return !dismissedAlerts.has(alertKey);
+            })
+            .map((insight: any, index: number) => {
+              const InsightIcon = insight.icon;
+              const alertKey = `alert-${insight.message.replace(/\s+/g, '-').toLowerCase()}`;
+              return (
+                <div
+                  key={index}
+                  className={`flex items-center justify-between px-4 py-3 rounded-lg border-l-4 ${
+                    insight.type === 'warning' ? 'border-yellow-500 bg-yellow-50' :
+                    insight.type === 'danger' ? 'border-red-500 bg-red-50' :
+                    insight.type === 'success' ? 'border-green-500 bg-green-50' :
+                    'border-blue-500 bg-blue-50'
+                  }`}
+                  role="alert"
+                >
+                  <div className="flex items-center gap-3 flex-1">
+                    <InsightIcon className={`w-5 h-5 flex-shrink-0 ${
+                      insight.type === 'warning' ? 'text-yellow-600' :
+                      insight.type === 'danger' ? 'text-red-600' :
+                      insight.type === 'success' ? 'text-green-600' :
+                      'text-blue-600'
+                    }`} />
+                    <p className={`text-sm font-medium ${
+                      insight.type === 'warning' ? 'text-yellow-900' :
+                      insight.type === 'danger' ? 'text-red-900' :
+                      insight.type === 'success' ? 'text-green-900' :
+                      'text-blue-900'
+                    }`}>
+                      {insight.message}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {insight.action && insight.link && (
+                      <Link
+                        to={insight.link}
+                        className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors whitespace-nowrap ${
+                          insight.type === 'warning' ? 'bg-yellow-600 hover:bg-yellow-700 text-white' :
+                          insight.type === 'danger' ? 'bg-red-600 hover:bg-red-700 text-white' :
+                          'bg-blue-600 hover:bg-blue-700 text-white'
+                        }`}
+                      >
+                        {insight.action}
+                      </Link>
+                    )}
+                    <button
+                      onClick={() => dismissAlert(alertKey)}
+                      className={`p-1.5 rounded-md transition-colors ${
+                        insight.type === 'warning' ? 'hover:bg-yellow-100 text-yellow-700' :
+                        insight.type === 'danger' ? 'hover:bg-red-100 text-red-700' :
+                        insight.type === 'success' ? 'hover:bg-green-100 text-green-700' :
+                        'hover:bg-blue-100 text-blue-700'
+                      }`}
+                      aria-label="Dismiss alert"
+                      title="Dismiss"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
-                {insight.action && insight.link && (
-                  <Link
-                    to={insight.link}
-                    className={`ml-4 px-3 py-1.5 text-sm font-medium rounded-md transition-colors whitespace-nowrap ${
-                      insight.type === 'warning' ? 'bg-yellow-600 hover:bg-yellow-700 text-white' :
-                      insight.type === 'danger' ? 'bg-red-600 hover:bg-red-700 text-white' :
-                      'bg-blue-600 hover:bg-blue-700 text-white'
-                    }`}
-                  >
-                    {insight.action}
-                  </Link>
-                )}
-              </div>
-            );
-          })}
+              );
+            })}
         </div>
       )}
 

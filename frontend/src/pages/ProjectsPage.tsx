@@ -11,6 +11,7 @@ import toast from 'react-hot-toast';
 import ConfirmDialog from '../components/ConfirmDialog';
 import EmptyState from '../components/EmptyState';
 import LoadingSkeleton from '../components/LoadingSkeleton';
+import { useTableSort } from '../utils/tableSort';
 
 const ProjectsPage = () => {
   const user = authService.getCurrentUser();
@@ -58,6 +59,27 @@ const ProjectsPage = () => {
   const canCreate = user && [UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER].includes(user.role as UserRole);
   const canBulkEdit = user && [UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER].includes(user.role as UserRole);
   const canBulkDelete = user && [UserRole.SUPER_ADMIN, UserRole.ADMIN].includes(user.role as UserRole);
+
+  // Table sorting
+  const { sortedData: sortedProjects, SortableHeader } = useTableSort({
+    data: data || [],
+    getValue: (item: any, field: string) => {
+      switch (field) {
+        case 'name':
+          return item.name || '';
+        case 'customer':
+          return item.customer?.name || 'N/A';
+        case 'manager':
+          return item.manager ? `${item.manager.firstName} ${item.manager.lastName}` : 'N/A';
+        case 'status':
+          return item.status || '';
+        case 'budget':
+          return item.budget || 0;
+        default:
+          return (item as any)[field];
+      }
+    },
+  });
 
   const handleSelectAll = (checked: boolean) => {
     if (checked) {
@@ -362,25 +384,25 @@ const ProjectsPage = () => {
                         />
                       </th>
                     )}
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
+                    <SortableHeader field="name">
                       Project
-                    </th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
+                    </SortableHeader>
+                    <SortableHeader field="customer">
                       Customer
-                    </th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
+                    </SortableHeader>
+                    <SortableHeader field="manager">
                       Manager
-                    </th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
+                    </SortableHeader>
+                    <SortableHeader field="status">
                       Status
-                    </th>
-                    <th className="px-4 py-3 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider">
+                    </SortableHeader>
+                    <SortableHeader field="budget" className="text-right">
                       Budget
-                    </th>
+                    </SortableHeader>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {data.map((project: any) => (
+                  {sortedProjects.map((project: any) => (
                     <tr 
                       key={project.id} 
                       className={`hover:bg-primary-50/30 transition-colors duration-150 ${selectedProjects.has(project.id) ? 'bg-primary-50' : ''}`}

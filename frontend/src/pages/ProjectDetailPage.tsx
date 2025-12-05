@@ -1,15 +1,16 @@
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from 'react-query';
 import api from '../services/api';
-import { ArrowLeft, Users, Clock, TrendingUp, AlertCircle, Plus, CheckCircle, Edit, Link as LinkIcon, FileText, Trash2, Save, X, Loader2 } from 'lucide-react';
+import { ArrowLeft, Users, Clock, TrendingUp, AlertCircle, Plus, CheckCircle, Edit, Link as LinkIcon, FileText, Trash2, Save, X, Loader2, Calendar } from 'lucide-react';
 import { formatCurrency, formatCurrencyTooltip } from '../utils/currency';
 import { format } from 'date-fns';
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { authService } from '../services/authService';
 import { UserRole } from '../utils/roles';
 import toast from 'react-hot-toast';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import Breadcrumbs from '../components/Breadcrumbs';
+import { useTableSort } from '../utils/tableSort';
 
 const ProjectDetailPage = () => {
   const { id } = useParams();
@@ -45,7 +46,8 @@ const ProjectDetailPage = () => {
     { enabled: !!id }
   );
 
-  const { data: tasks } = useQuery(
+  // Fetch both explicit tasks and tasks from timesheets
+  const { data: explicitTasks } = useQuery(
     ['tasks', id],
     async () => {
       const res = await api.get(`/tasks?projectId=${id}`);
@@ -53,6 +55,158 @@ const ProjectDetailPage = () => {
     },
     { enabled: !!id }
   );
+
+  // Fetch timesheets to extract tasks from them
+  const { data: projectTimesheets } = useQuery(
+    ['project-timesheets-for-tasks', id],
+    async () => {
+      const res = await api.get(`/timesheets?projectId=${id}`);
+      return res.data.data || [];
+    },
+    { enabled: !!id }
+  );
+
+  // Determine user permissions (before early returns to ensure hooks are always called)
+  const canEdit = user && [UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER].includes(user.role as UserRole);
+  const isEmployee = user?.role === UserRole.TEAM_MEMBER;
+  const canViewFinancials = user && [UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER].includes(user.role as UserRole);
+
+  // Fetch employee's timesheet data for this project (must be before early returns)
+  const { data: employeeTimesheets } = useQuery(
+    ['employee-project-timesheets', id, user?.id],
+    async () => {
+      if (!id || !user?.id || !isEmployee) return [];
+      const res = await api.get(`/timesheets?projectId=${id}`);
+      const allTimesheets = res.data.data || [];
+      // Filter to only this employee's timesheets
+      return allTimesheets.filter((ts: any) => ts.userId === user.id || ts.user?.id === user.id);
+    },
+    { enabled: !!id && !!user?.id && isEmployee }
+  );
+
+  // Helper function to extract task name from timesheet description
+  const extractTaskName = (description: string | null | undefined): string | null => {
+    if (!description) return null;
+    
+    // Check if description contains "Task:" pattern
+    const taskMatch = description.match(/Task:\s*(.+?)(?:\n|$)/i);
+    if (taskMatch && taskMatch[1]) {
+      return taskMatch[1].trim();
+    }
+    
+    // Check for predefined task names in description
+    const predefinedTasks = [
+      'Content Writing', 'Content Research', 'UI/UX Design', 'Frontend Development',
+      'Backend Development', 'Testing', 'Deployment', 'Bug Fixing', 'Code Review',
+      'Database Design', 'API Integration', 'Mobile Development', 'Quality Assurance'
+    ];
+    
+    for (const task of predefinedTasks) {
+      if (description.includes(task)) {
+        return task;
+      }
+    }
+    
+    return null;
+  };
+
+  // Combine explicit tasks with tasks extracted from timesheets
+  const tasks = useMemo(() => {
+    const taskMap = new Map();
+    
+    // Add explicit tasks first
+    if (explicitTasks) {
+      explicitTasks.forEach((task: any) => {
+        taskMap.set(task.id, {
+          ...task,
+          fromTimesheet: false,
+          timesheetCount: 0,
+        });
+      });
+    }
+
+    // Extract tasks from timesheets
+    if (projectTimesheets) {
+      projectTimesheets.forEach((timesheet: any) => {
+        // Check if timesheet has a taskId and task object (if backend supports it)
+        if (timesheet.taskId && timesheet.task) {
+          if (!taskMap.has(timesheet.taskId)) {
+            taskMap.set(timesheet.taskId, {
+              ...timesheet.task,
+              fromTimesheet: true,
+              timesheetCount: 1,
+            });
+          } else {
+            const existing = taskMap.get(timesheet.taskId);
+            existing.timesheetCount = (existing.timesheetCount || 0) + 1;
+            existing.fromTimesheet = true;
+          }
+        }
+        // Extract task name from description
+        else if (timesheet.description) {
+          const taskName = extractTaskName(timesheet.description);
+          if (taskName) {
+            const taskKey = `timesheet-${taskName.toLowerCase().replace(/\s+/g, '-')}`;
+            if (!taskMap.has(taskKey)) {
+              taskMap.set(taskKey, {
+                id: taskKey,
+                title: taskName,
+                description: `Task extracted from timesheet entries. Total hours logged: ${timesheet.hours || 0}`,
+                status: 'IN_PROGRESS',
+                priority: 'MEDIUM',
+                fromTimesheet: true,
+                timesheetCount: 1,
+                totalHours: timesheet.hours || 0,
+                assignedTo: timesheet.user,
+                projectId: id,
+                createdAt: timesheet.date,
+              });
+            } else {
+              const existing = taskMap.get(taskKey);
+              existing.timesheetCount = (existing.timesheetCount || 0) + 1;
+              existing.totalHours = (existing.totalHours || 0) + (timesheet.hours || 0);
+            }
+          }
+        }
+      });
+    }
+
+    return Array.from(taskMap.values());
+  }, [explicitTasks, projectTimesheets, id]);
+
+  // Calculate employee metrics (must be before early returns)
+  const employeeMetrics = useMemo(() => {
+    if (!isEmployee || !employeeTimesheets) {
+      return {
+        totalHours: 0,
+        approvedHours: 0,
+        pendingHours: 0,
+        timesheetCount: 0,
+        tasksAssigned: 0,
+      };
+    }
+
+    const totalHours = employeeTimesheets.reduce((sum: number, ts: any) => sum + (ts.hours || 0), 0);
+    const approvedHours = employeeTimesheets
+      .filter((ts: any) => ts.status === 'APPROVED')
+      .reduce((sum: number, ts: any) => sum + (ts.hours || 0), 0);
+    const pendingHours = employeeTimesheets
+      .filter((ts: any) => ts.status === 'SUBMITTED' || ts.status === 'DRAFT')
+      .reduce((sum: number, ts: any) => sum + (ts.hours || 0), 0);
+    
+    // Count unique tasks assigned to employee
+    const employeeTasks = tasks?.filter((t: any) => 
+      t.assignedTo?.id === user?.id || t.assignedToId === user?.id
+    ) || [];
+    
+    return {
+      totalHours,
+      approvedHours,
+      pendingHours,
+      timesheetCount: employeeTimesheets.length,
+      tasksAssigned: employeeTasks.length,
+    };
+  }, [isEmployee, employeeTimesheets, tasks, user?.id]);
 
   const updateStageMutation = useMutation(
     async ({ projectStageId, status }: { projectStageId: string; status: string }) => {
@@ -94,9 +248,9 @@ const ProjectDetailPage = () => {
     );
   }
 
-  const canEdit = user && [UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER].includes(user.role as UserRole);
-  const budgetUtilization = project.budget > 0 ? ((project.totalCost || 0) / project.budget) * 100 : 0;
-  const isOverBudget = (project.totalCost || 0) > project.budget;
+  // Calculate budget metrics (after project is confirmed to exist)
+  const budgetUtilization = project?.budget > 0 ? ((project.totalCost || 0) / project.budget) * 100 : 0;
+  const isOverBudget = (project?.totalCost || 0) > (project?.budget || 0);
   const isAtRisk = budgetUtilization > 90;
 
   // Chart data for budget visualization
@@ -109,6 +263,144 @@ const ProjectDetailPage = () => {
     name: stage.stage.name,
     progress: stage.status === 'CLOSED' ? 100 : stage.status === 'IN_PROGRESS' ? 50 : 0,
   })) || [];
+
+  // Calculate hours analytics for admins/managers (must be before sorting hooks)
+  const hoursAnalytics = useMemo(() => {
+    try {
+      if (!canViewFinancials || !projectTimesheets || !Array.isArray(projectTimesheets) || projectTimesheets.length === 0) {
+        return null;
+      }
+
+      const totalHours = projectTimesheets.reduce((sum: number, ts: any) => sum + (ts.hours || 0), 0);
+      const approvedHours = projectTimesheets
+        .filter((ts: any) => ts.status === 'APPROVED')
+        .reduce((sum: number, ts: any) => sum + (ts.hours || 0), 0);
+      const pendingHours = projectTimesheets
+        .filter((ts: any) => ts.status === 'SUBMITTED' || ts.status === 'DRAFT')
+        .reduce((sum: number, ts: any) => sum + (ts.hours || 0), 0);
+      const rejectedHours = projectTimesheets
+        .filter((ts: any) => ts.status === 'REJECTED')
+        .reduce((sum: number, ts: any) => sum + (ts.hours || 0), 0);
+
+      // Group hours by employee
+      const hoursByEmployee = projectTimesheets.reduce((acc: any, ts: any) => {
+        if (!ts) return acc;
+        const userId = ts.userId || ts.user?.id;
+        const userName = ts.user ? `${ts.user.firstName} ${ts.user.lastName}` : 'Unknown';
+        if (!userId) return acc;
+        
+        if (!acc[userId]) {
+          acc[userId] = {
+            userId,
+            userName,
+            totalHours: 0,
+            approvedHours: 0,
+            pendingHours: 0,
+            rejectedHours: 0,
+            entries: 0,
+          };
+        }
+        acc[userId].totalHours += ts.hours || 0;
+        acc[userId].entries += 1;
+        if (ts.status === 'APPROVED') acc[userId].approvedHours += ts.hours || 0;
+        if (ts.status === 'SUBMITTED' || ts.status === 'DRAFT') acc[userId].pendingHours += ts.hours || 0;
+        if (ts.status === 'REJECTED') acc[userId].rejectedHours += ts.hours || 0;
+        return acc;
+      }, {});
+
+      const employeeHoursList = Object.values(hoursByEmployee).sort((a: any, b: any) => b.totalHours - a.totalHours);
+
+      // Chart data for hours by status
+      const hoursStatusData = [
+        { name: 'Approved', value: approvedHours, fill: '#10b981' },
+        { name: 'Pending', value: pendingHours, fill: '#f59e0b' },
+        { name: 'Rejected', value: rejectedHours, fill: '#ef4444' },
+      ].filter(item => item.value > 0);
+
+      // Recent submissions (last 10)
+      const recentSubmissions = [...projectTimesheets]
+        .filter((ts: any) => ts && ts.date)
+        .sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime())
+        .slice(0, 10);
+
+      return {
+        totalHours,
+        approvedHours,
+        pendingHours,
+        rejectedHours,
+        employeeHoursList,
+        hoursStatusData,
+        recentSubmissions,
+        totalEntries: projectTimesheets.length,
+      };
+    } catch (error) {
+      console.error('Error calculating hours analytics:', error);
+      return null;
+    }
+  }, [canViewFinancials, projectTimesheets]);
+
+  // Table sorting for Hours by Employee (after hoursAnalytics is defined)
+  const { sortedData: sortedEmployeeHours, SortableHeader: EmployeeHoursSortableHeader } = useTableSort({
+    data: hoursAnalytics?.employeeHoursList || [],
+    getValue: (item: any, field: string) => {
+      switch (field) {
+        case 'employee':
+          return item.userName || '';
+        case 'totalHours':
+          return item.totalHours || 0;
+        case 'approvedHours':
+          return item.approvedHours || 0;
+        case 'pendingHours':
+          return item.pendingHours || 0;
+        case 'rejectedHours':
+          return item.rejectedHours || 0;
+        case 'entries':
+          return item.entries || 0;
+        default:
+          return (item as any)[field];
+      }
+    },
+  });
+
+  // Table sorting for Recent Submissions
+  const { sortedData: sortedRecentSubmissions, SortableHeader: RecentSubmissionsSortableHeader } = useTableSort({
+    data: hoursAnalytics?.recentSubmissions || [],
+    getValue: (item: any, field: string) => {
+      switch (field) {
+        case 'date':
+          return new Date(item.date).getTime();
+        case 'employee':
+          return item.user ? `${item.user.firstName || ''} ${item.user.lastName || ''}`.trim() || item.user.email || 'N/A' : 'N/A';
+        case 'hours':
+          return item.hours || 0;
+        case 'status':
+          return item.status || '';
+        case 'description':
+          return item.description || '';
+        default:
+          return (item as any)[field];
+      }
+    },
+  });
+
+  // Table sorting for Team Members
+  const { sortedData: sortedTeamMembers, SortableHeader: TeamSortableHeader } = useTableSort({
+    data: project?.members?.filter(Boolean) || [],
+    getValue: (item: any, field: string) => {
+      switch (field) {
+        case 'name':
+          return item.user ? `${item.user.firstName || ''} ${item.user.lastName || ''}`.trim() : 'N/A';
+        case 'email':
+          return item.user?.email || 'N/A';
+        case 'role':
+          return item.user?.role || 'N/A';
+        case 'hourlyRate':
+          return item.user?.hourlyRate || 0;
+        default:
+          return (item as any)[field];
+      }
+    },
+  });
 
   return (
     <div className="space-y-6">
@@ -142,55 +434,175 @@ const ProjectDetailPage = () => {
         )}
       </div>
 
-      {/* Project Header */}
+      {/* Project Header - Reorganized */}
       <div className="card">
-        <div className="flex justify-between items-start mb-4">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900 mb-2">{project.name}</h1>
-            <p className="text-gray-600 mb-4">{project.code}</p>
-            {project.description && <p className="text-gray-700">{project.description}</p>}
-          </div>
-          <span
-            className={`px-3 py-1 text-sm font-medium rounded-full ${
-              project.status === 'IN_PROGRESS'
-                ? 'bg-blue-100 text-blue-800'
-                : project.status === 'COMPLETED'
-                ? 'bg-green-100 text-green-800'
-                : project.status === 'ON_HOLD'
-                ? 'bg-yellow-100 text-yellow-800'
-                : 'bg-gray-100 text-gray-800'
-            }`}
-          >
-            {project.status.replace('_', ' ')}
-          </span>
-        </div>
-
-        {/* Key Metrics */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-          <div className="p-4 bg-blue-50 rounded-lg">
-            <p className="text-sm text-gray-600 mb-1">Budget</p>
-            <p className="text-2xl font-bold text-gray-900">{formatCurrency(project.budget || 0)}</p>
-          </div>
-          <div className="p-4 bg-green-50 rounded-lg">
-            <p className="text-sm text-gray-600 mb-1">Progress</p>
-            <p className="text-2xl font-bold text-gray-900">{project.calculatedProgress || 0}%</p>
-          </div>
-          <div className={`p-4 rounded-lg ${isOverBudget ? 'bg-red-50' : isAtRisk ? 'bg-yellow-50' : 'bg-gray-50'}`}>
-            <p className="text-sm text-gray-600 mb-1">Spent</p>
-            <p className={`text-2xl font-bold ${isOverBudget ? 'text-red-600' : 'text-gray-900'}`}>
-              {formatCurrency(project.totalCost || 0)}
-            </p>
-            {isOverBudget && (
-              <p className="text-xs text-red-600 mt-1 flex items-center">
-                <AlertCircle className="w-3 h-3 mr-1" />
-                Over Budget
-              </p>
+        {/* Project Title and Status Row */}
+        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-6">
+          <div className="flex-1">
+            <div className="flex items-center gap-3 mb-2">
+              <h1 className="text-3xl font-bold text-gray-900">{project.name}</h1>
+              <span
+                className={`px-3 py-1 text-sm font-medium rounded-full whitespace-nowrap ${
+                  project.status === 'IN_PROGRESS'
+                    ? 'bg-blue-100 text-blue-800'
+                    : project.status === 'COMPLETED'
+                    ? 'bg-green-100 text-green-800'
+                    : project.status === 'ON_HOLD'
+                    ? 'bg-yellow-100 text-yellow-800'
+                    : 'bg-gray-100 text-gray-800'
+                }`}
+              >
+                {project.status.replace('_', ' ')}
+              </span>
+            </div>
+            <p className="text-lg text-gray-600 font-medium mb-2">{project.code}</p>
+            {project.description && (
+              <p className="text-gray-700 leading-relaxed">{project.description}</p>
             )}
           </div>
-          <div className="p-4 bg-purple-50 rounded-lg">
-            <p className="text-sm text-gray-600 mb-1">Health Score</p>
-            <p className="text-2xl font-bold text-gray-900">{project.healthScore || 'N/A'}</p>
-          </div>
+        </div>
+
+        {/* Project Metadata */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6 pb-6 border-b border-gray-200">
+          {project.customer && (
+            <div className="flex items-start gap-2">
+              <Users className="w-5 h-5 text-gray-400 mt-0.5 flex-shrink-0" />
+              <div>
+                <p className="text-xs text-gray-500 uppercase tracking-wide">Customer</p>
+                <p className="text-sm font-semibold text-gray-900">{project.customer.name}</p>
+              </div>
+            </div>
+          )}
+          {project.manager && (
+            <div className="flex items-start gap-2">
+              <Users className="w-5 h-5 text-gray-400 mt-0.5 flex-shrink-0" />
+              <div>
+                <p className="text-xs text-gray-500 uppercase tracking-wide">Project Manager</p>
+                <p className="text-sm font-semibold text-gray-900">
+                  {project.manager.firstName} {project.manager.lastName}
+                </p>
+              </div>
+            </div>
+          )}
+          {project.department && (
+            <div className="flex items-start gap-2">
+              <Users className="w-5 h-5 text-gray-400 mt-0.5 flex-shrink-0" />
+              <div>
+                <p className="text-xs text-gray-500 uppercase tracking-wide">Department</p>
+                <p className="text-sm font-semibold text-gray-900">{project.department.name}</p>
+              </div>
+            </div>
+          )}
+          {(project.startDate || project.endDate) && (
+            <div className="flex items-start gap-2">
+              <Calendar className="w-5 h-5 text-gray-400 mt-0.5 flex-shrink-0" />
+              <div>
+                <p className="text-xs text-gray-500 uppercase tracking-wide">Timeline</p>
+                <p className="text-sm font-semibold text-gray-900">
+                  {project.startDate && new Date(project.startDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                  {project.startDate && project.endDate && ' - '}
+                  {project.endDate && new Date(project.endDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                  {!project.startDate && !project.endDate && 'Not set'}
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Key Metrics - Reorganized for Better Logic */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          {isEmployee ? (
+            <>
+              {/* Employee View - Personal Metrics First */}
+              <div className="p-4 bg-blue-50 rounded-lg border-l-4 border-blue-500">
+                <div className="flex items-center justify-between mb-2">
+                  <Clock className="w-5 h-5 text-blue-600" />
+                </div>
+                <p className="text-sm text-gray-600 mb-1">My Hours Logged</p>
+                <p className="text-2xl font-bold text-gray-900">{employeeMetrics.totalHours.toFixed(1)}h</p>
+                <p className="text-xs text-gray-500 mt-1">
+                  {employeeMetrics.approvedHours.toFixed(1)}h approved
+                </p>
+              </div>
+              <div className="p-4 bg-green-50 rounded-lg border-l-4 border-green-500">
+                <div className="flex items-center justify-between mb-2">
+                  <CheckCircle className="w-5 h-5 text-green-600" />
+                </div>
+                <p className="text-sm text-gray-600 mb-1">My Tasks</p>
+                <p className="text-2xl font-bold text-gray-900">{employeeMetrics.tasksAssigned}</p>
+                <p className="text-xs text-gray-500 mt-1">
+                  {tasks?.filter((t: any) => (t.assignedTo?.id === user?.id || t.assignedToId === user?.id) && t.status === 'DONE').length || 0} completed
+                </p>
+              </div>
+              <div className="p-4 bg-purple-50 rounded-lg border-l-4 border-purple-500">
+                <div className="flex items-center justify-between mb-2">
+                  <FileText className="w-5 h-5 text-purple-600" />
+                </div>
+                <p className="text-sm text-gray-600 mb-1">Timesheet Entries</p>
+                <p className="text-2xl font-bold text-gray-900">{employeeMetrics.timesheetCount}</p>
+                <p className="text-xs text-gray-500 mt-1">
+                  {employeeMetrics.pendingHours > 0 ? `${employeeMetrics.pendingHours.toFixed(1)}h pending` : 'All approved'}
+                </p>
+              </div>
+              <div className="p-4 bg-orange-50 rounded-lg border-l-4 border-orange-500">
+                <div className="flex items-center justify-between mb-2">
+                  <Users className="w-5 h-5 text-orange-600" />
+                </div>
+                <p className="text-sm text-gray-600 mb-1">Team Size</p>
+                <p className="text-2xl font-bold text-gray-900">{project.members?.length || 0}</p>
+                <p className="text-xs text-gray-500 mt-1">team members</p>
+              </div>
+            </>
+          ) : (
+            <>
+              {/* Admin/Manager View - Financial Metrics in Logical Order */}
+              <div className="p-4 bg-blue-50 rounded-lg border-l-4 border-blue-500">
+                <div className="flex items-center justify-between mb-2">
+                  <TrendingUp className="w-5 h-5 text-blue-600" />
+                </div>
+                <p className="text-sm text-gray-600 mb-1">Budget</p>
+                <p className="text-2xl font-bold text-gray-900">{formatCurrency(project.budget || 0)}</p>
+                <p className="text-xs text-gray-500 mt-1">Total allocated</p>
+              </div>
+              <div className="p-4 bg-green-50 rounded-lg border-l-4 border-green-500">
+                <div className="flex items-center justify-between mb-2">
+                  <CheckCircle className="w-5 h-5 text-green-600" />
+                </div>
+                <p className="text-sm text-gray-600 mb-1">Progress</p>
+                <p className="text-2xl font-bold text-gray-900">{project.calculatedProgress || 0}%</p>
+                <p className="text-xs text-gray-500 mt-1">Completion rate</p>
+              </div>
+              <div className={`p-4 rounded-lg border-l-4 ${isOverBudget ? 'bg-red-50 border-red-500' : isAtRisk ? 'bg-yellow-50 border-yellow-500' : 'bg-gray-50 border-gray-400'}`}>
+                <div className="flex items-center justify-between mb-2">
+                  <AlertCircle className={`w-5 h-5 ${isOverBudget ? 'text-red-600' : isAtRisk ? 'text-yellow-600' : 'text-gray-600'}`} />
+                </div>
+                <p className="text-sm text-gray-600 mb-1">Spent</p>
+                <p className={`text-2xl font-bold ${isOverBudget ? 'text-red-600' : 'text-gray-900'}`}>
+                  {formatCurrency(project.totalCost || 0)}
+                </p>
+                {isOverBudget ? (
+                  <p className="text-xs text-red-600 mt-1 flex items-center">
+                    <AlertCircle className="w-3 h-3 mr-1" />
+                    Over Budget
+                  </p>
+                ) : (
+                  <p className="text-xs text-gray-500 mt-1">
+                    {budgetUtilization.toFixed(1)}% utilized
+                  </p>
+                )}
+              </div>
+              <div className="p-4 bg-purple-50 rounded-lg border-l-4 border-purple-500">
+                <div className="flex items-center justify-between mb-2">
+                  <TrendingUp className="w-5 h-5 text-purple-600" />
+                </div>
+                <p className="text-sm text-gray-600 mb-1">Health Score</p>
+                <p className="text-2xl font-bold text-gray-900">{project.healthScore || 'N/A'}</p>
+                <p className="text-xs text-gray-500 mt-1">
+                  {project.healthScore && project.healthScore >= 70 ? 'Good' : project.healthScore && project.healthScore >= 50 ? 'Fair' : 'Needs attention'}
+                </p>
+              </div>
+            </>
+          )}
         </div>
       </div>
 
@@ -228,67 +640,141 @@ const ProjectDetailPage = () => {
       <div className="mt-6">
         {activeTab === 'overview' && (
           <div className="space-y-6">
+            {/* Main Content Grid - Unique content only, no repetition */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* Budget Visualization */}
-              <div className="card">
-                <h2 className="text-xl font-bold mb-4">Budget vs. Actual</h2>
-                <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={budgetData}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="name" />
-                    <YAxis />
-                    <Tooltip formatter={(value: number) => formatCurrencyTooltip(value)} />
-                    <Bar dataKey="value" />
-                  </BarChart>
-                </ResponsiveContainer>
-                <div className="mt-4 space-y-2">
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">Budget:</span>
-                    <span className="font-semibold">{formatCurrency(project.budget || 0)}</span>
+              {/* Admin/Manager: Budget Analysis Chart */}
+              {canViewFinancials ? (
+                <div className="card">
+                  <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-xl font-bold">Budget vs. Actual Spending</h2>
+                    <TrendingUp className="w-5 h-5 text-gray-400" />
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">Spent:</span>
-                    <span className={`font-semibold ${isOverBudget ? 'text-red-600' : ''}`}>
-                      {formatCurrency(project.totalCost || 0)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">Remaining:</span>
-                    <span className={`font-semibold ${(project.budget || 0) - (project.totalCost || 0) < 0 ? 'text-red-600' : ''}`}>
-                      {formatCurrency((project.budget || 0) - (project.totalCost || 0))}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">Utilization:</span>
-                    <span className={`font-semibold ${isAtRisk || isOverBudget ? 'text-red-600' : ''}`}>
-                      {budgetUtilization.toFixed(1)}%
-                    </span>
-                  </div>
-                  {/* Profit/Loss for Admins */}
-                  {(user?.role === UserRole.SUPER_ADMIN || user?.role === UserRole.ADMIN) && project.financials && (
-                    <>
-                      <div className="border-t border-gray-200 pt-2 mt-2">
-                        <div className="flex justify-between">
-                          <span className="text-gray-600 font-medium">Profit/Loss:</span>
+                  <ResponsiveContainer width="100%" height={300}>
+                    <BarChart data={budgetData}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="name" />
+                      <YAxis />
+                      <Tooltip formatter={(value: number) => formatCurrencyTooltip(value)} />
+                      <Bar dataKey="value" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                  <div className="mt-4 pt-4 border-t border-gray-200">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <p className="text-xs text-gray-500 mb-1">Remaining Budget</p>
+                        <p className={`text-lg font-semibold ${(project.budget || 0) - (project.totalCost || 0) < 0 ? 'text-red-600' : 'text-green-600'}`}>
+                          {formatCurrency((project.budget || 0) - (project.totalCost || 0))}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-gray-500 mb-1">Budget Utilization</p>
+                        <p className={`text-lg font-semibold ${isAtRisk || isOverBudget ? 'text-red-600' : 'text-gray-900'}`}>
+                          {budgetUtilization.toFixed(1)}%
+                        </p>
+                      </div>
+                    </div>
+                    {/* Profit/Loss for Admins */}
+                    {(user?.role === UserRole.SUPER_ADMIN || user?.role === UserRole.ADMIN) && project.financials && (
+                      <div className="pt-3 mt-3 border-t border-gray-200">
+                        <div className="flex justify-between items-center">
+                          <span className="text-sm text-gray-600">Profit/Loss:</span>
                           <span className={`font-bold text-lg ${project.financials.isProfit ? 'text-green-600' : project.financials.isLoss ? 'text-red-600' : 'text-gray-900'}`}>
                             {formatCurrency(project.financials.profitLoss || 0)}
                           </span>
                         </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-600 text-sm">Margin:</span>
+                        <div className="flex justify-between items-center mt-1">
+                          <span className="text-xs text-gray-500">Margin:</span>
                           <span className={`text-sm font-semibold ${project.financials.profitLossPercentage >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                             {project.financials.profitLossPercentage.toFixed(1)}%
                           </span>
                         </div>
                       </div>
-                    </>
-                  )}
+                    )}
+                  </div>
                 </div>
-              </div>
+              ) : (
+                /* Employee View - Project Timeline & Information */
+                <div className="card">
+                  <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-xl font-bold">Project Timeline</h2>
+                    <Calendar className="w-5 h-5 text-gray-400" />
+                  </div>
+                  <div className="space-y-4">
+                    {project.startDate && (
+                      <div className="flex items-center gap-3 p-3 bg-blue-50 rounded-lg border border-blue-200">
+                        <Calendar className="w-5 h-5 text-blue-600 flex-shrink-0" />
+                        <div className="flex-1">
+                          <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Start Date</p>
+                          <p className="font-semibold text-gray-900">
+                            {new Date(project.startDate).toLocaleDateString('en-US', { 
+                              year: 'numeric', 
+                              month: 'long', 
+                              day: 'numeric' 
+                            })}
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                    {project.endDate && (
+                      <div className="flex items-center gap-3 p-3 bg-green-50 rounded-lg border border-green-200">
+                        <Calendar className="w-5 h-5 text-green-600 flex-shrink-0" />
+                        <div className="flex-1">
+                          <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Target End Date</p>
+                          <p className="font-semibold text-gray-900">
+                            {new Date(project.endDate).toLocaleDateString('en-US', { 
+                              year: 'numeric', 
+                              month: 'long', 
+                              day: 'numeric' 
+                            })}
+                          </p>
+                          {new Date(project.endDate) < new Date() && (
+                            <p className="text-xs text-red-600 mt-1 flex items-center">
+                              <AlertCircle className="w-3 h-3 mr-1" />
+                              Past due
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                    <div className="flex items-center gap-3 p-3 bg-purple-50 rounded-lg border border-purple-200">
+                      <Users className="w-5 h-5 text-purple-600 flex-shrink-0" />
+                      <div className="flex-1">
+                        <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Team Size</p>
+                        <p className="font-semibold text-gray-900">
+                          {project.members?.length || 0} {project.members?.length === 1 ? 'member' : 'members'}
+                        </p>
+                      </div>
+                    </div>
+                    {project.department && (
+                      <div className="flex items-center gap-3 p-3 bg-orange-50 rounded-lg border border-orange-200">
+                        <Users className="w-5 h-5 text-orange-600 flex-shrink-0" />
+                        <div className="flex-1">
+                          <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Department</p>
+                          <p className="font-semibold text-gray-900">{project.department.name}</p>
+                        </div>
+                      </div>
+                    )}
+                    {project.manager && (
+                      <div className="flex items-center gap-3 p-3 bg-indigo-50 rounded-lg border border-indigo-200">
+                        <Users className="w-5 h-5 text-indigo-600 flex-shrink-0" />
+                        <div className="flex-1">
+                          <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Project Manager</p>
+                          <p className="font-semibold text-gray-900">
+                            {project.manager.firstName} {project.manager.lastName}
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
 
-              {/* Progress Chart */}
+              {/* Stage Progress Chart - Shown for all roles */}
               <div className="card">
-                <h2 className="text-xl font-bold mb-4">Stage Progress</h2>
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-xl font-bold">Stage Progress</h2>
+                  <TrendingUp className="w-5 h-5 text-gray-400" />
+                </div>
                 <ResponsiveContainer width="100%" height={300}>
                   <LineChart data={progressData}>
                     <CartesianGrid strokeDasharray="3 3" />
@@ -298,8 +784,219 @@ const ProjectDetailPage = () => {
                     <Line type="monotone" dataKey="progress" stroke="#3b82f6" strokeWidth={2} />
                   </LineChart>
                 </ResponsiveContainer>
+                {project.stages && project.stages.length > 0 && (
+                  <div className="mt-4 pt-4 border-t border-gray-200">
+                    <div className="grid grid-cols-2 gap-3">
+                      {project.stages.slice(0, 4).map((stage: any) => (
+                        <div key={stage.id} className="text-center">
+                          <p className="text-xs text-gray-500 mb-1">{stage.stage.name}</p>
+                          <p className="text-sm font-semibold text-gray-900">
+                            {stage.status === 'CLOSED' ? '100%' : stage.status === 'IN_PROGRESS' ? '50%' : '0%'}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
+
+            {/* Hours Submitted Analytics - Admin/Manager Only */}
+            {hoursAnalytics && (
+              <div className="card">
+                <div className="flex items-center justify-between mb-6">
+                  <h2 className="text-xl font-bold">Hours Submitted Analytics</h2>
+                  <Clock className="w-5 h-5 text-gray-400" />
+                </div>
+
+                {/* Summary Statistics */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                  <div className="p-4 bg-blue-50 rounded-lg border-l-4 border-blue-500">
+                    <p className="text-xs text-gray-600 mb-1">Total Hours</p>
+                    <p className="text-2xl font-bold text-gray-900">{hoursAnalytics.totalHours.toFixed(1)}h</p>
+                    <p className="text-xs text-gray-500 mt-1">{hoursAnalytics.totalEntries} entries</p>
+                  </div>
+                  <div className="p-4 bg-green-50 rounded-lg border-l-4 border-green-500">
+                    <p className="text-xs text-gray-600 mb-1">Approved</p>
+                    <p className="text-2xl font-bold text-green-700">{hoursAnalytics.approvedHours.toFixed(1)}h</p>
+                    <p className="text-xs text-gray-500 mt-1">
+                      {hoursAnalytics.totalHours > 0 ? ((hoursAnalytics.approvedHours / hoursAnalytics.totalHours) * 100).toFixed(1) : 0}% of total
+                    </p>
+                  </div>
+                  <div className="p-4 bg-yellow-50 rounded-lg border-l-4 border-yellow-500">
+                    <p className="text-xs text-gray-600 mb-1">Pending</p>
+                    <p className="text-2xl font-bold text-yellow-700">{hoursAnalytics.pendingHours.toFixed(1)}h</p>
+                    <p className="text-xs text-gray-500 mt-1">
+                      {(projectTimesheets?.filter((ts: any) => ts.status === 'SUBMITTED' || ts.status === 'DRAFT') || []).length} entries
+                    </p>
+                  </div>
+                  <div className="p-4 bg-red-50 rounded-lg border-l-4 border-red-500">
+                    <p className="text-xs text-gray-600 mb-1">Rejected</p>
+                    <p className="text-2xl font-bold text-red-700">{hoursAnalytics.rejectedHours.toFixed(1)}h</p>
+                    <p className="text-xs text-gray-500 mt-1">
+                      {(projectTimesheets?.filter((ts: any) => ts.status === 'REJECTED') || []).length} entries
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                  {/* Hours by Status Chart */}
+                  {hoursAnalytics.hoursStatusData.length > 0 && (
+                    <div>
+                      <h3 className="text-lg font-semibold text-gray-900 mb-4">Hours by Status</h3>
+                      <ResponsiveContainer width="100%" height={250}>
+                        <BarChart data={hoursAnalytics.hoursStatusData}>
+                          <CartesianGrid strokeDasharray="3 3" />
+                          <XAxis dataKey="name" />
+                          <YAxis />
+                          <Tooltip formatter={(value: number) => `${value.toFixed(1)}h`} />
+                          <Bar dataKey="value" />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  )}
+
+                  {/* Top Contributors */}
+                  {hoursAnalytics.employeeHoursList.length > 0 && (
+                    <div>
+                      <h3 className="text-lg font-semibold text-gray-900 mb-4">Top Contributors</h3>
+                      <div className="space-y-3">
+                        {hoursAnalytics.employeeHoursList.slice(0, 5).map((emp: any, idx: number) => (
+                          <div key={emp.userId} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                            <div className="flex items-center gap-3">
+                              <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${
+                                idx === 0 ? 'bg-yellow-100 text-yellow-800' :
+                                idx === 1 ? 'bg-gray-100 text-gray-800' :
+                                idx === 2 ? 'bg-orange-100 text-orange-800' :
+                                'bg-blue-100 text-blue-800'
+                              }`}>
+                                {idx + 1}
+                              </div>
+                              <div>
+                                <p className="font-medium text-gray-900">{emp.userName}</p>
+                                <p className="text-xs text-gray-500">{emp.entries} {emp.entries === 1 ? 'entry' : 'entries'}</p>
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <p className="font-bold text-gray-900">{emp.totalHours.toFixed(1)}h</p>
+                              <p className="text-xs text-gray-500">
+                                {emp.approvedHours.toFixed(1)}h approved
+                              </p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Hours by Employee Table */}
+                {hoursAnalytics.employeeHoursList.length > 0 && (
+                  <div className="mb-6">
+                    <h3 className="text-lg font-semibold text-gray-900 mb-4">Hours by Employee</h3>
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full divide-y divide-gray-200">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <EmployeeHoursSortableHeader field="employee">Employee</EmployeeHoursSortableHeader>
+                            <EmployeeHoursSortableHeader field="totalHours" className="text-right">Total Hours</EmployeeHoursSortableHeader>
+                            <EmployeeHoursSortableHeader field="approvedHours" className="text-right">Approved</EmployeeHoursSortableHeader>
+                            <EmployeeHoursSortableHeader field="pendingHours" className="text-right">Pending</EmployeeHoursSortableHeader>
+                            <EmployeeHoursSortableHeader field="rejectedHours" className="text-right">Rejected</EmployeeHoursSortableHeader>
+                            <EmployeeHoursSortableHeader field="entries" className="text-right">Entries</EmployeeHoursSortableHeader>
+                          </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-200">
+                          {sortedEmployeeHours.map((emp: any) => (
+                            <tr key={emp.userId} className="hover:bg-gray-50">
+                              <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
+                                {emp.userName}
+                              </td>
+                              <td className="px-4 py-3 whitespace-nowrap text-right text-sm font-bold text-gray-900">
+                                {emp.totalHours.toFixed(1)}h
+                              </td>
+                              <td className="px-4 py-3 whitespace-nowrap text-right text-sm text-green-700">
+                                {emp.approvedHours.toFixed(1)}h
+                              </td>
+                              <td className="px-4 py-3 whitespace-nowrap text-right text-sm text-yellow-700">
+                                {emp.pendingHours.toFixed(1)}h
+                              </td>
+                              <td className="px-4 py-3 whitespace-nowrap text-right text-sm text-red-700">
+                                {emp.rejectedHours.toFixed(1)}h
+                              </td>
+                              <td className="px-4 py-3 whitespace-nowrap text-right text-sm text-gray-500">
+                                {emp.entries}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                        <tfoot className="bg-gray-50">
+                          <tr>
+                            <td className="px-4 py-3 text-sm font-bold text-gray-900">Total</td>
+                            <td className="px-4 py-3 text-right text-sm font-bold text-gray-900">{hoursAnalytics.totalHours.toFixed(1)}h</td>
+                            <td className="px-4 py-3 text-right text-sm font-bold text-green-700">{hoursAnalytics.approvedHours.toFixed(1)}h</td>
+                            <td className="px-4 py-3 text-right text-sm font-bold text-yellow-700">{hoursAnalytics.pendingHours.toFixed(1)}h</td>
+                            <td className="px-4 py-3 text-right text-sm font-bold text-red-700">{hoursAnalytics.rejectedHours.toFixed(1)}h</td>
+                            <td className="px-4 py-3 text-right text-sm font-bold text-gray-900">{hoursAnalytics.totalEntries}</td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* Recent Submissions */}
+                {hoursAnalytics.recentSubmissions.length > 0 && (
+                  <div>
+                    <h3 className="text-lg font-semibold text-gray-900 mb-4">Recent Submissions</h3>
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full divide-y divide-gray-200">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <RecentSubmissionsSortableHeader field="date">Date</RecentSubmissionsSortableHeader>
+                            <RecentSubmissionsSortableHeader field="employee">Employee</RecentSubmissionsSortableHeader>
+                            <RecentSubmissionsSortableHeader field="hours" className="text-right">Hours</RecentSubmissionsSortableHeader>
+                            <RecentSubmissionsSortableHeader field="status">Status</RecentSubmissionsSortableHeader>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Description</th>
+                          </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-200">
+                          {sortedRecentSubmissions.map((ts: any) => (
+                            <tr key={ts.id} className="hover:bg-gray-50">
+                              <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
+                                {format(new Date(ts.date), 'MMM dd, yyyy')}
+                              </td>
+                              <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
+                                {ts.user ? `${ts.user.firstName} ${ts.user.lastName}` : 'Unknown'}
+                              </td>
+                              <td className="px-4 py-3 whitespace-nowrap text-right text-sm font-medium text-gray-900">
+                                {ts.hours.toFixed(2)}h
+                              </td>
+                              <td className="px-4 py-3 whitespace-nowrap">
+                                <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+                                  ts.status === 'APPROVED'
+                                    ? 'bg-green-100 text-green-800'
+                                    : ts.status === 'SUBMITTED'
+                                    ? 'bg-yellow-100 text-yellow-800'
+                                    : ts.status === 'REJECTED'
+                                    ? 'bg-red-100 text-red-800'
+                                    : 'bg-gray-100 text-gray-800'
+                                }`}>
+                                  {ts.status}
+                                </span>
+                              </td>
+                              <td className="px-4 py-3 text-sm text-gray-600 max-w-md truncate">
+                                {ts.description || '-'}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Employee Cost Breakdown - Admin Only */}
             {(user?.role === UserRole.SUPER_ADMIN || user?.role === UserRole.ADMIN) && project.employeeCosts && project.employeeCosts.length > 0 && (
@@ -431,7 +1128,7 @@ const ProjectDetailPage = () => {
         {activeTab === 'team' && (
           <div className="card">
             <div className="flex justify-between items-center mb-4">
-              <h2 className="text-xl font-bold">Employees</h2>
+              <h2 className="text-xl font-bold">Team Members</h2>
               {canEdit && (
                 <button
                   onClick={() => setTeamMemberModalOpen(true)}
@@ -442,38 +1139,66 @@ const ProjectDetailPage = () => {
                 </button>
               )}
             </div>
-            {project.members && project.members.length > 0 ? (
+            {project.members && Array.isArray(project.members) && project.members.length > 0 ? (
               <div className="overflow-x-auto">
                 <table className="min-w-full divide-y divide-gray-200">
                   <thead className="bg-gray-50">
                     <tr>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Email</th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Role</th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Hourly Rate</th>
+                      <TeamSortableHeader field="name">Name</TeamSortableHeader>
+                      <TeamSortableHeader field="email">Email</TeamSortableHeader>
+                      <TeamSortableHeader field="role">Role</TeamSortableHeader>
+                      {canViewFinancials && (
+                        <TeamSortableHeader field="hourlyRate">Hourly Rate</TeamSortableHeader>
+                      )}
                       {canEdit && <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>}
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
-                    {project.members.map((member: any) => (
-                      <tr key={member.id}>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                          {member.user.firstName} {member.user.lastName}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{member.user.email}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{member.user.role}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {member.user.hourlyRate ? formatCurrency(member.user.hourlyRate, { maximumFractionDigits: 2 }) : 'N/A'}
-                        </td>
-                        {canEdit && (
-                          <td className="px-6 py-4 whitespace-nowrap text-sm">
-                            <button
-                              onClick={() => {
-                                setConfirmDialog({
-                                  isOpen: true,
-                                  title: 'Remove Employee',
-                                  message: `Are you sure you want to remove ${member.user.firstName} ${member.user.lastName} from this project? They will no longer be able to log time for this project.`,
-                                  type: 'warning',
+                    {sortedTeamMembers
+                      .filter((member: any) => member && member.user) // Filter out invalid members
+                      .map((member: any) => {
+                      const user = member.user;
+                      return (
+                        <tr key={member.id}>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                            {user.firstName || ''} {user.lastName || ''}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{user.email || 'N/A'}</td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            {user.role ? (
+                              <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+                                user.role === 'SUPER_ADMIN'
+                                  ? 'bg-purple-100 text-purple-800'
+                                  : user.role === 'ADMIN'
+                                  ? 'bg-blue-100 text-blue-800'
+                                  : user.role === 'PROJECT_MANAGER'
+                                  ? 'bg-green-100 text-green-800'
+                                  : user.role === 'TEAM_MEMBER'
+                                  ? 'bg-gray-100 text-gray-800'
+                                  : user.role === 'CLIENT'
+                                  ? 'bg-orange-100 text-orange-800'
+                                  : 'bg-gray-100 text-gray-800'
+                              }`}>
+                                {String(user.role).replace('_', ' ')}
+                              </span>
+                            ) : (
+                              <span className="text-sm text-gray-400">Not assigned</span>
+                            )}
+                          </td>
+                          {canViewFinancials && (
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                              {user.hourlyRate ? formatCurrency(user.hourlyRate, { maximumFractionDigits: 2 }) : 'N/A'}
+                            </td>
+                          )}
+                          {canEdit && (
+                            <td className="px-6 py-4 whitespace-nowrap text-sm">
+                              <button
+                                onClick={() => {
+                                  setConfirmDialog({
+                                    isOpen: true,
+                                    title: 'Remove Employee',
+                                    message: `Are you sure you want to remove ${user.firstName} ${user.lastName} from this project? They will no longer be able to log time for this project.`,
+                                    type: 'warning',
                                   onConfirm: () => {
                                     // API call to remove member would go here
                                     // For now, we'll need to create an endpoint or use project update
@@ -487,9 +1212,10 @@ const ProjectDetailPage = () => {
                               Remove
                             </button>
                           </td>
-                        )}
-                      </tr>
-                    ))}
+                          )}
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -500,85 +1226,62 @@ const ProjectDetailPage = () => {
         )}
 
         {activeTab === 'tasks' && (
-          <div className="card">
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-xl font-bold">Tasks</h2>
+          <div className="space-y-6">
+            {/* Header */}
+            <div className="flex justify-between items-center">
+              <div>
+                <h2 className="text-xl font-bold text-gray-900">Tasks</h2>
+                <p className="text-sm text-gray-500 mt-1">
+                  {tasks && tasks.length > 0 
+                    ? `${tasks.length} task${tasks.length > 1 ? 's' : ''} total`
+                    : 'No tasks yet'}
+                </p>
+              </div>
               {canEdit && (
                 <button 
                   onClick={() => {
                     setEditingTask(null);
                     setTaskModalOpen(true);
                   }}
-                  className="btn btn-primary inline-flex items-center text-sm"
+                  className="btn btn-primary inline-flex items-center"
                 >
                   <Plus className="w-4 h-4 mr-2" />
                   New Task
                 </button>
               )}
             </div>
+
             {tasks && tasks.length > 0 ? (
-              <div className="space-y-3">
-                {tasks.map((task: any) => (
-                  <div key={task.id} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
-                    <div className="flex justify-between items-start">
-                      <div className="flex-1">
-                        <h3 className="font-semibold text-gray-900">{task.title}</h3>
-                        {task.description && <p className="text-sm text-gray-600 mt-1">{task.description}</p>}
-                        <div className="flex items-center gap-4 mt-2 text-xs text-gray-500">
-                          {task.assignedTo && (
-                            <span>Assigned to: {task.assignedTo.firstName} {task.assignedTo.lastName}</span>
-                          )}
-                          {task.dueDate && <span>Due: {new Date(task.dueDate).toLocaleDateString()}</span>}
-                          {task.stage && <span>Stage: {task.stage.name}</span>}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span
-                          className={`px-2 py-1 text-xs font-medium rounded-full ${
-                            task.priority === 'URGENT'
-                              ? 'bg-red-100 text-red-800'
-                              : task.priority === 'HIGH'
-                              ? 'bg-orange-100 text-orange-800'
-                              : task.priority === 'MEDIUM'
-                              ? 'bg-yellow-100 text-yellow-800'
-                              : 'bg-gray-100 text-gray-800'
-                          }`}
-                        >
-                          {task.priority}
-                        </span>
-                        <span
-                          className={`px-2 py-1 text-xs font-medium rounded-full ${
-                            task.status === 'DONE'
-                              ? 'bg-green-100 text-green-800'
-                              : task.status === 'IN_PROGRESS'
-                              ? 'bg-blue-100 text-blue-800'
-                              : task.status === 'BLOCKED'
-                              ? 'bg-red-100 text-red-800'
-                              : 'bg-gray-100 text-gray-800'
-                          }`}
-                        >
-                          {task.status.replace('_', ' ')}
-                        </span>
-                        {canEdit && (
-                          <div className="flex gap-1 ml-2">
-                            <button
-                              onClick={() => {
-                                setEditingTask(task);
-                                setTaskModalOpen(true);
-                              }}
-                              className="text-indigo-600 hover:text-indigo-900"
-                              title="Edit task"
-                            >
-                              <Edit className="w-4 h-4" />
-                            </button>
-                            <button
-                              onClick={() => {
-                                setConfirmDialog({
-                                  isOpen: true,
-                                  title: 'Delete Task',
-                                  message: 'Are you sure you want to delete this task? This action cannot be undone.',
-                                  type: 'danger',
-                                  onConfirm: () => {
+              <div className="space-y-6">
+                {/* Explicit Tasks Section */}
+                {tasks.filter((t: any) => !t.fromTimesheet).length > 0 && (
+                  <div>
+                    <div className="flex items-center gap-2 mb-4">
+                      <CheckCircle className="w-5 h-5 text-gray-600" />
+                      <h3 className="text-lg font-semibold text-gray-900">Project Tasks</h3>
+                      <span className="px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-700 rounded-full">
+                        {tasks.filter((t: any) => !t.fromTimesheet).length}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-1 gap-3">
+                      {tasks
+                        .filter((t: any) => !t.fromTimesheet)
+                        .map((task: any) => (
+                          <TaskCard 
+                            key={task.id} 
+                            task={task} 
+                            canEdit={canEdit}
+                            onEdit={() => {
+                              setEditingTask(task);
+                              setTaskModalOpen(true);
+                            }}
+                            onDelete={() => {
+                              setConfirmDialog({
+                                isOpen: true,
+                                title: 'Delete Task',
+                                message: 'Are you sure you want to delete this task? This action cannot be undone.',
+                                type: 'danger',
+                                onConfirm: () => {
                                   api.delete(`/tasks/${task.id}`).then(() => {
                                     toast.success('Task deleted successfully');
                                     queryClient.invalidateQueries(['tasks', id]);
@@ -591,20 +1294,58 @@ const ProjectDetailPage = () => {
                                 },
                               });
                             }}
-                              className="text-red-600 hover:text-red-900"
-                              title="Delete task"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </div>
-                        )}
-                      </div>
+                          />
+                        ))}
                     </div>
                   </div>
-                ))}
+                )}
+
+                {/* Timesheet Tasks Section */}
+                {tasks.filter((t: any) => t.fromTimesheet).length > 0 && (
+                  <div>
+                    <div className="flex items-center gap-2 mb-4">
+                      <Clock className="w-5 h-5 text-blue-600" />
+                      <h3 className="text-lg font-semibold text-gray-900">Tasks from Timesheets</h3>
+                      <span className="px-2 py-0.5 text-xs font-medium bg-blue-100 text-blue-700 rounded-full">
+                        {tasks.filter((t: any) => t.fromTimesheet).length}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {tasks
+                        .filter((t: any) => t.fromTimesheet)
+                        .sort((a: any, b: any) => (b.totalHours || 0) - (a.totalHours || 0))
+                        .map((task: any) => (
+                          <TaskCard 
+                            key={task.id} 
+                            task={task} 
+                            canEdit={false}
+                            isFromTimesheet={true}
+                          />
+                        ))}
+                    </div>
+                  </div>
+                )}
               </div>
             ) : (
-              <p className="text-gray-500">No tasks yet. Create one to get started!</p>
+              <div className="card text-center py-12">
+                <CheckCircle className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+                <h3 className="text-lg font-medium text-gray-900 mb-2">No tasks yet</h3>
+                <p className="text-sm text-gray-500 mb-6">
+                  Create a task to get started, or tasks will appear here when timesheets are logged for this project.
+                </p>
+                {canEdit && (
+                  <button
+                    onClick={() => {
+                      setEditingTask(null);
+                      setTaskModalOpen(true);
+                    }}
+                    className="btn btn-primary inline-flex items-center"
+                  >
+                    <Plus className="w-4 h-4 mr-2" />
+                    Create Your First Task
+                  </button>
+                )}
+              </div>
             )}
           </div>
         )}
@@ -1271,6 +2012,128 @@ const TeamMemberModal = ({ projectId, existingMembers, onClose }: { projectId: s
             </button>
           </div>
         </form>
+      </div>
+    </div>
+  );
+};
+
+// Task Card Component
+const TaskCard = ({ 
+  task, 
+  canEdit, 
+  isFromTimesheet = false,
+  onEdit,
+  onDelete 
+}: { 
+  task: any; 
+  canEdit: boolean; 
+  isFromTimesheet?: boolean;
+  onEdit?: () => void;
+  onDelete?: () => void;
+}) => {
+  return (
+    <div className={`card hover:shadow-lg transition-all duration-200 ${isFromTimesheet ? 'border-l-4 border-l-blue-500' : ''}`}>
+      <div className="flex justify-between items-start">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-2 flex-wrap">
+            <h3 className="font-semibold text-gray-900 text-base">{task.title}</h3>
+            {isFromTimesheet && (
+              <span className="px-2 py-0.5 text-xs font-medium bg-blue-100 text-blue-800 rounded-full whitespace-nowrap">
+                From Timesheets
+              </span>
+            )}
+            {task.timesheetCount > 0 && (
+              <span className="px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-700 rounded-full whitespace-nowrap">
+                {task.timesheetCount} {task.timesheetCount > 1 ? 'entries' : 'entry'}
+              </span>
+            )}
+          </div>
+          
+          {task.description && (
+            <p className="text-sm text-gray-600 mb-3 line-clamp-2">{task.description}</p>
+          )}
+
+          <div className="flex flex-wrap items-center gap-3 text-xs text-gray-600">
+            {task.assignedTo && (
+              <div className="flex items-center gap-1">
+                <Users className="w-3 h-3" />
+                <span>{task.assignedTo.firstName} {task.assignedTo.lastName}</span>
+              </div>
+            )}
+            {task.dueDate && (
+              <div className="flex items-center gap-1">
+                <Clock className="w-3 h-3" />
+                <span>Due: {new Date(task.dueDate).toLocaleDateString()}</span>
+              </div>
+            )}
+            {task.stage && (
+              <div className="flex items-center gap-1">
+                <span>Stage: {task.stage.name}</span>
+              </div>
+            )}
+            {task.totalHours > 0 && (
+              <div className="flex items-center gap-1 text-primary-600 font-semibold">
+                <Clock className="w-3 h-3" />
+                <span>{task.totalHours.toFixed(1)} hours</span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="flex flex-col items-end gap-2 ml-4">
+          <div className="flex items-center gap-2 flex-wrap justify-end">
+            {task.priority && (
+              <span
+                className={`px-2 py-1 text-xs font-medium rounded-full whitespace-nowrap ${
+                  task.priority === 'URGENT'
+                    ? 'bg-red-100 text-red-800'
+                    : task.priority === 'HIGH'
+                    ? 'bg-orange-100 text-orange-800'
+                    : task.priority === 'MEDIUM'
+                    ? 'bg-yellow-100 text-yellow-800'
+                    : 'bg-gray-100 text-gray-800'
+                }`}
+              >
+                {task.priority}
+              </span>
+            )}
+            {task.status && (
+              <span
+                className={`px-2 py-1 text-xs font-medium rounded-full whitespace-nowrap ${
+                  task.status === 'DONE'
+                    ? 'bg-green-100 text-green-800'
+                    : task.status === 'IN_PROGRESS'
+                    ? 'bg-blue-100 text-blue-800'
+                    : task.status === 'BLOCKED'
+                    ? 'bg-red-100 text-red-800'
+                    : task.status === 'IN_REVIEW'
+                    ? 'bg-purple-100 text-purple-800'
+                    : 'bg-gray-100 text-gray-800'
+                }`}
+              >
+                {task.status.replace('_', ' ')}
+              </span>
+            )}
+          </div>
+          {canEdit && !isFromTimesheet && onEdit && onDelete && (
+            <div className="flex gap-1 mt-1">
+              <button
+                onClick={onEdit}
+                className="p-1.5 text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 rounded transition-colors"
+                title="Edit task"
+              >
+                <Edit className="w-4 h-4" />
+              </button>
+              <button
+                onClick={onDelete}
+                className="p-1.5 text-red-600 hover:text-red-900 hover:bg-red-50 rounded transition-colors"
+                title="Delete task"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

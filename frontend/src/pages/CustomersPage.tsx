@@ -10,6 +10,7 @@ import toast from 'react-hot-toast';
 import ConfirmDialog from '../components/ConfirmDialog';
 import EmptyState from '../components/EmptyState';
 import LoadingSkeleton from '../components/LoadingSkeleton';
+import { useTableSort } from '../utils/tableSort';
 
 const CustomersPage = () => {
   const user = authService.getCurrentUser();
@@ -44,6 +45,27 @@ const CustomersPage = () => {
     const matchesStatus = !statusFilter || customer.status === statusFilter;
     return matchesSearch && matchesStatus;
   }) || [];
+
+  // Table sorting
+  const { sortedData: sortedCustomers, SortableHeader } = useTableSort({
+    data: filteredCustomers,
+    getValue: (item: any, field: string) => {
+      switch (field) {
+        case 'name':
+          return item.name || '';
+        case 'industry':
+          return item.industry || 'N/A';
+        case 'contact':
+          return item.contactPerson || 'N/A';
+        case 'email':
+          return item.email || 'N/A';
+        case 'status':
+          return item.status || '';
+        default:
+          return (item as any)[field];
+      }
+    },
+  });
 
   const canBulkEdit = user && [UserRole.SUPER_ADMIN, UserRole.ADMIN].includes(user.role as UserRole);
 
@@ -261,16 +283,16 @@ const CustomersPage = () => {
                       />
                     </th>
                   )}
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Name</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Industry</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Contact</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Email</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Status</th>
+                  <SortableHeader field="name">Name</SortableHeader>
+                  <SortableHeader field="industry">Industry</SortableHeader>
+                  <SortableHeader field="contact">Contact</SortableHeader>
+                  <SortableHeader field="email">Email</SortableHeader>
+                  <SortableHeader field="status">Status</SortableHeader>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Actions</th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {filteredCustomers.map((customer: any) => (
+                {sortedCustomers.map((customer: any) => (
                   <tr key={customer.id} className={`hover:bg-primary-50/30 transition-colors duration-150 ${selectedCustomers.has(customer.id) ? 'bg-primary-50' : ''}`}>
                     {canBulkEdit && (
                       <td className="px-4 py-4 whitespace-nowrap">

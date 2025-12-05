@@ -85,7 +85,9 @@ app.use('/api', apiLimiter);
 // API Routes with specific rate limiters
 app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/users', writeLimiter, userRoutes);
-app.use('/api/projects', writeLimiter, projectRoutes);
+// Projects: Use readLimiter since most operations are reads (GET requests)
+// Write operations (POST/PUT/DELETE) are protected by route-level authorization
+app.use('/api/projects', readLimiter, projectRoutes);
 app.use('/api/timesheets', writeLimiter, timesheetRoutes);
 app.use('/api/customers', writeLimiter, customerRoutes);
 app.use('/api/departments', writeLimiter, departmentRoutes);
