@@ -67,64 +67,38 @@ const DashboardPage = () => {
     }
   };
 
-  // Fetch all data with error handling
-  const { 
-    data: allProjects, 
-    isLoading: projectsLoading, 
-    isError: projectsError,
-    refetch: refetchProjects 
-  } = useQuery('all-projects', async () => {
-    const res = await api.get('/projects');
-    return res.data.data || [];
-  }, {
-    onError: (error: any) => {
-      const errorMessage = error.userMessage || error.response?.data?.error || 'Failed to load projects';
-      toast.error(errorMessage);
-    },
-    retry: 2,
-    refetchOnWindowFocus: false
-  });
-
-  const { 
-    data: allTimesheets, 
-    isLoading: timesheetsLoading,
-    isError: timesheetsError,
-    refetch: refetchTimesheets 
-  } = useQuery('all-timesheets', async () => {
-    const res = await api.get('/timesheets');
-    return res.data.data || [];
-  }, {
-    onError: (error: any) => {
-      const errorMessage = error.userMessage || error.response?.data?.error || 'Failed to load timesheets';
-      toast.error(errorMessage);
-    },
-    retry: 2,
-    refetchOnWindowFocus: false
-  });
-
-  // Only fetch users if user is admin (to avoid 403 errors)
+  // Fetch all dashboard data in a single request to reduce API calls
   const canViewUsers = user && ['SUPER_ADMIN', 'ADMIN'].includes(user.role);
   
   const { 
-    data: allUsers
-  } = useQuery('all-users', async () => {
-    const res = await api.get('/users');
-    return res.data.data || [];
+    data: rawDashboardData, 
+    isLoading: dashboardLoading, 
+    isError: dashboardError,
+    refetch: refetchDashboard 
+  } = useQuery('dashboard-data', async () => {
+    const res = await api.get(`/analytics/dashboard?includeUsers=${canViewUsers ? 'true' : 'false'}`);
+    return res.data.data;
   }, {
-    enabled: !!canViewUsers, // Only fetch if user has permission
     onError: (error: any) => {
-      // Silently fail for users as it's not critical for dashboard
-      // Don't log 403 errors as they're expected for non-admin users
-      if (error.response?.status !== 403 && process.env.NODE_ENV === 'development') {
-        console.error('Failed to load users:', error);
-      }
+      const errorMessage = error.userMessage || error.response?.data?.error || 'Failed to load dashboard data';
+      toast.error(errorMessage);
     },
-    retry: false, // Don't retry on permission errors
-    refetchOnWindowFocus: false
+    retry: 1, // Reduced retries to prevent too many requests
+    refetchOnWindowFocus: false,
+    staleTime: 30 * 1000, // Cache for 30 seconds
   });
 
-  const isLoading = projectsLoading || timesheetsLoading;
-  const hasError = projectsError || timesheetsError;
+  // Extract data from batch response
+  const allProjects = rawDashboardData?.projects || [];
+  const allTimesheets = rawDashboardData?.timesheets || [];
+  const allUsers = rawDashboardData?.users || [];
+
+  const isLoading = dashboardLoading;
+  const hasError = dashboardError;
+  
+  // Refetch functions for compatibility
+  const refetchProjects = refetchDashboard;
+  const refetchTimesheets = refetchDashboard;
 
   // Memoized calculations with trend analysis and intelligent insights
   const dashboardData = useMemo(() => {
@@ -749,8 +723,7 @@ const DashboardPage = () => {
   }, [dashboardData, isEmployee, user?.role]);
 
   const handleRetry = () => {
-    if (projectsError) refetchProjects();
-    if (timesheetsError) refetchTimesheets();
+    refetchDashboard();
   };
 
   const [refreshing, setRefreshing] = useState(false);
@@ -758,7 +731,7 @@ const DashboardPage = () => {
   const handleRefresh = async () => {
     setRefreshing(true);
     try {
-      await Promise.all([refetchProjects(), refetchTimesheets()]);
+      await refetchDashboard();
       toast.success('Dashboard refreshed');
     } catch (error) {
       toast.error('Failed to refresh dashboard');

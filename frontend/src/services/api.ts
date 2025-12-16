@@ -59,6 +59,10 @@ api.interceptors.response.use(
     } else if (error.response?.status === 422) {
       // Validation errors
       error.userMessage = error.response?.data?.error || 'Please check your input and try again.';
+    } else if (error.response?.status === 429) {
+      // Rate limit errors
+      error.userMessage = error.response?.data?.error || 'Too many requests. Please wait a moment and try again.';
+      error.rateLimitError = true;
     } else if (error.response?.status >= 500) {
       error.userMessage = 'A server error occurred. Please try again later or contact support if the problem persists.';
     } else {

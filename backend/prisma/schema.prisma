@@ -5,7 +5,7 @@ generator client {
 }
 
 datasource db {
-  provider = "mysql"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -45,27 +45,33 @@ enum CustomerStatus {
 }
 
 model User {
-  id           String   @id @default(uuid())
-  email        String   @unique
-  password     String
-  firstName    String
-  lastName     String
-  role         UserRole @default(TEAM_MEMBER)
-  departmentId String?
-  hourlyRate   Float?
-  isActive     Boolean  @default(true)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id             String   @id @default(uuid())
+  email          String   @unique
+  password       String
+  firstName      String
+  lastName       String
+  profilePicture String? // URL or path to profile picture
+  role           UserRole @default(TEAM_MEMBER)
+  departmentId   String?
+  hourlyRate     Float?
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
-  department         Department?     @relation("DepartmentMembers", fields: [departmentId], references: [id], onDelete: SetNull)
-  managedProjects    Project[]       @relation("ProjectManager")
-  projectMemberships ProjectMember[]
-  timesheets         Timesheet[]
-  createdProjects    Project[]       @relation("ProjectCreator")
-  createdDepartments Department[]    @relation("DepartmentCreator")
-  headedDepartments  Department[]    @relation("DepartmentHead")
-  assignedTasks      Task[]          @relation("TaskAssignee")
-  createdTasks       Task[]          @relation("TaskCreator")
+  department            Department?       @relation("DepartmentMembers", fields: [departmentId], references: [id], onDelete: SetNull)
+  managedProjects       Project[]         @relation("ProjectManager")
+  projectMemberships    ProjectMember[]
+  timesheets            Timesheet[]
+  createdProjects       Project[]         @relation("ProjectCreator")
+  createdDepartments    Department[]      @relation("DepartmentCreator")
+  headedDepartments     Department[]      @relation("DepartmentHead")
+  assignedTasks         Task[]            @relation("TaskAssignee")
+  createdTasks          Task[]            @relation("TaskCreator")
+  resourceCapacity      ResourceCapacity?
+  templatesCreated      ProjectTemplate[] @relation("TemplateCreator")
+  approvalChainsCreated ApprovalChain[]   @relation("ApprovalChainCreator")
+  approvalRequests      ApprovalRequest[] @relation("ApprovalRequester")
+  approvalsGiven        ApprovalRequest[] @relation("ApprovalApprover")
 
   @@index([email])
   @@index([role])
@@ -191,6 +197,7 @@ model Timesheet {
   id             String          @id @default(uuid())
   userId         String
   projectId      String
+  taskId         String? // Link to specific task
   date           DateTime
   hours          Float // 0.5-24
   description    String?
@@ -203,6 +210,7 @@ model Timesheet {
 
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  task    Task?   @relation(fields: [taskId], references: [id], onDelete: SetNull)
 
   @@index([userId])
   @@index([projectId])
@@ -211,6 +219,7 @@ model Timesheet {
   @@index([userId, date])
   @@index([projectId, status])
   @@index([status, date])
+  @@index([userId, status, date]) // Composite index for common query patterns
 }
 
 model Resource {
@@ -247,28 +256,36 @@ enum TaskPriority {
 }
 
 model Task {
-  id           String       @id @default(uuid())
-  projectId    String
-  assignedToId String?
-  title        String
-  description  String?      @db.Text
-  status       TaskStatus   @default(TODO)
-  priority     TaskPriority @default(MEDIUM)
-  dueDate      DateTime?
-  stageId      String?
-  createdById  String
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
+  id             String       @id @default(uuid())
+  projectId      String
+  assignedToId   String?
+  title          String
+  description    String?      @db.Text
+  status         TaskStatus   @default(TODO)
+  priority       TaskPriority @default(MEDIUM)
+  dueDate        DateTime?
+  stageId        String?
+  estimatedHours Float?
+  actualHours    Float?
+  createdById    String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
 
-  project    Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  assignedTo User?   @relation("TaskAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
-  stage      Stage?  @relation("StageTasks", fields: [stageId], references: [id], onDelete: SetNull)
-  creator    User    @relation("TaskCreator", fields: [createdById], references: [id])
+  project        Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  assignedTo     User?            @relation("TaskAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+  stage          Stage?           @relation("StageTasks", fields: [stageId], references: [id], onDelete: SetNull)
+  creator        User             @relation("TaskCreator", fields: [createdById], references: [id])
+  timesheets     Timesheet[]
+  dependsOn      TaskDependency[] @relation("TaskDependencies")
+  dependentTasks TaskDependency[] @relation("DependentTasks")
 
   @@index([projectId])
   @@index([assignedToId])
   @@index([status])
   @@index([priority])
+  @@index([projectId, status]) // Composite index for project task filtering
+  @@index([assignedToId, status]) // Composite index for user task filtering
+  @@index([dueDate]) // Index for due date queries
 }
 
 model AuditLog {
@@ -285,4 +302,93 @@ model AuditLog {
   @@index([userId])
   @@index([entityType])
   @@index([createdAt])
+  @@index([entityType, createdAt]) // Composite index for entity type queries with date
+  @@index([userId, createdAt]) // Composite index for user activity queries
+}
+
+model TaskDependency {
+  id              String   @id @default(uuid())
+  taskId          String
+  dependsOnTaskId String
+  createdAt       DateTime @default(now())
+
+  task          Task @relation("TaskDependencies", fields: [taskId], references: [id], onDelete: Cascade)
+  dependsOnTask Task @relation("DependentTasks", fields: [dependsOnTaskId], references: [id], onDelete: Cascade)
+
+  @@unique([taskId, dependsOnTaskId])
+  @@index([taskId])
+  @@index([dependsOnTaskId])
+}
+
+model ProjectTemplate {
+  id              String   @id @default(uuid())
+  name            String   @unique
+  description     String?
+  stages          Json // Array of stage IDs with weights
+  defaultBudget   Float?
+  defaultDuration Int? // Days
+  isActive        Boolean  @default(true)
+  createdById     String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  creator User @relation("TemplateCreator", fields: [createdById], references: [id])
+
+  @@index([isActive])
+}
+
+model ResourceCapacity {
+  id                String    @id @default(uuid())
+  userId            String    @unique
+  weeklyHours       Float     @default(40) // Standard weekly capacity
+  currentAllocation Float     @default(0) // Current hours allocated
+  startDate         DateTime?
+  endDate           DateTime? // For temporary capacity changes
+  notes             String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model ApprovalChain {
+  id          String   @id @default(uuid())
+  name        String
+  entityType  String // TIMESHEET, PROJECT, etc.
+  steps       Json // Array of approval steps with roles/users
+  isActive    Boolean  @default(true)
+  createdById String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  creator          User              @relation("ApprovalChainCreator", fields: [createdById], references: [id])
+  approvalRequests ApprovalRequest[]
+
+  @@index([entityType, isActive])
+}
+
+model ApprovalRequest {
+  id             String    @id @default(uuid())
+  entityType     String
+  entityId       String
+  chainId        String
+  currentStep    Int       @default(0)
+  status         String    @default("PENDING") // PENDING, APPROVED, REJECTED
+  requestedById  String
+  approvedById   String?
+  approvedAt     DateTime?
+  rejectedReason String?
+  metadata       Json?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  chain     ApprovalChain @relation(fields: [chainId], references: [id])
+  requester User          @relation("ApprovalRequester", fields: [requestedById], references: [id])
+  approver  User?         @relation("ApprovalApprover", fields: [approvedById], references: [id])
+
+  @@index([entityType, entityId])
+  @@index([status])
+  @@index([requestedById])
 }

@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from 'react-query';
 import { Link } from 'react-router-dom';
 import api from '../services/api';
 import { Plus, Search, Filter, FolderKanban, Loader2, CheckSquare, Square, Trash2, MoreVertical } from 'lucide-react';
-import { useState } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { authService } from '../services/authService';
 import { UserRole } from '../utils/roles';
 import { formatCurrency } from '../utils/currency';
@@ -12,14 +12,18 @@ import ConfirmDialog from '../components/ConfirmDialog';
 import EmptyState from '../components/EmptyState';
 import LoadingSkeleton from '../components/LoadingSkeleton';
 import { useTableSort } from '../utils/tableSort';
+import Avatar from '../components/Avatar';
 
 const ProjectsPage = () => {
   const user = authService.getCurrentUser();
   const queryClient = useQueryClient();
-  const [search, setSearch] = useState('');
+  const [searchInput, setSearchInput] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [showArchived, setShowArchived] = useState(false);
   const [selectedProjects, setSelectedProjects] = useState<Set<string>>(new Set());
+  const [isRateLimited, setIsRateLimited] = useState(false);
+  const [hasInitialLoad, setHasInitialLoad] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<{
     isOpen: boolean;
     title: string;
@@ -34,25 +38,75 @@ const ProjectsPage = () => {
     onConfirm: () => {},
   });
 
+  // Debounce search input to prevent multiple requests while typing
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchInput);
+    }, 800); // Wait 800ms after user stops typing to reduce requests
+
+    return () => clearTimeout(timer);
+  }, [searchInput]);
+
+  // Build query params once - use stable key
+  const queryKey = useMemo(() => {
+    const key: any[] = ['projects'];
+    if (debouncedSearch.trim()) key.push('search', debouncedSearch.trim());
+    if (statusFilter) key.push('status', statusFilter);
+    if (showArchived) key.push('archived');
+    return key;
+  }, [debouncedSearch, statusFilter, showArchived]);
+
+  const queryParams = useMemo(() => {
+    const params = new URLSearchParams();
+    if (debouncedSearch.trim()) params.append('search', debouncedSearch.trim());
+    if (statusFilter) params.append('status', statusFilter);
+    if (showArchived) {
+      params.append('includeArchived', 'archived');
+    }
+    return params.toString();
+  }, [debouncedSearch, statusFilter, showArchived]);
+
+  // Single optimized query with smart retry logic
   const { data, isLoading, error } = useQuery(
-    ['projects', search, statusFilter, showArchived],
+    queryKey,
     async () => {
-      const params = new URLSearchParams();
-      if (search) params.append('search', search);
-      if (statusFilter) params.append('status', statusFilter);
-      if (showArchived) {
-        params.append('includeArchived', 'archived');
+      try {
+        const res = await api.get(`/projects?${queryParams}`);
+        setIsRateLimited(false); // Reset rate limit flag on success
+        setHasInitialLoad(true);
+        return res.data.data;
+      } catch (err: any) {
+        if (err.response?.status === 429) {
+          setIsRateLimited(true);
+          // Wait 15 seconds before allowing retry (rate limit window)
+          setTimeout(() => setIsRateLimited(false), 15000);
+        }
+        throw err;
       }
-      const res = await api.get(`/projects?${params.toString()}`);
-      return res.data.data;
     },
     {
-      onError: (error: any) => {
-        const errorMessage = error.userMessage || error.response?.data?.error || 'Failed to load projects';
-        toast.error(errorMessage);
+      enabled: !isRateLimited, // Don't run query if rate limited
+      onSuccess: () => {
+        setHasInitialLoad(true);
       },
-      retry: 2,
+      onError: (error: any) => {
+        // Don't show error toast for rate limiting - user will see it's loading
+        if (error.response?.status !== 429) {
+          const errorMessage = error.userMessage || error.response?.data?.error || 'Failed to load projects';
+          toast.error(errorMessage);
+        } else {
+          // Only show toast once
+          if (!hasInitialLoad) {
+            toast.error('Too many requests. Please wait a moment.');
+          }
+        }
+      },
+      retry: false, // Disable all retries to prevent multiple requests
       refetchOnWindowFocus: false,
+      refetchOnMount: hasInitialLoad ? false : 'always', // Only fetch once on mount
+      refetchOnReconnect: false, // Don't refetch on reconnect
+      staleTime: 60000, // Consider data fresh for 60 seconds
+      cacheTime: 600000, // Keep in cache for 10 minutes
     }
   );
 
@@ -108,7 +162,7 @@ const ProjectsPage = () => {
       onSuccess: () => {
         toast.success('Projects status updated successfully');
         setSelectedProjects(new Set());
-        queryClient.invalidateQueries(['projects', search, statusFilter, showArchived]);
+        queryClient.invalidateQueries(['projects']);
       },
       onError: (error: any) => {
         const errorMessage = error.userMessage || error.response?.data?.error || 'Failed to update projects';
@@ -126,7 +180,7 @@ const ProjectsPage = () => {
       onSuccess: () => {
         toast.success('Projects archived successfully');
         setSelectedProjects(new Set());
-        queryClient.invalidateQueries(['projects', search, statusFilter, showArchived]);
+        queryClient.invalidateQueries(['projects']);
       },
       onError: (error: any) => {
         const errorMessage = error.userMessage || error.response?.data?.error || 'Failed to archive projects';
@@ -144,7 +198,7 @@ const ProjectsPage = () => {
       onSuccess: () => {
         toast.success('Projects restored successfully');
         setSelectedProjects(new Set());
-        queryClient.invalidateQueries(['projects', search, statusFilter, showArchived]);
+        queryClient.invalidateQueries(['projects']);
       },
       onError: (error: any) => {
         const errorMessage = error.userMessage || error.response?.data?.error || 'Failed to restore projects';
@@ -305,8 +359,8 @@ const ProjectsPage = () => {
               type="text"
               placeholder="Search by project name or code..."
               className="input pl-10 w-full"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
             />
           </div>
           <div className="relative sm:w-56">
@@ -343,7 +397,23 @@ const ProjectsPage = () => {
         </div>
 
         {/* Loading State */}
-        {isLoading ? (
+        {isRateLimited ? (
+          <div className="text-center py-12">
+            <p className="text-yellow-600 mb-2 font-semibold">Rate Limit Reached</p>
+            <p className="text-sm text-gray-500 mb-4">
+              Too many requests. Please wait 15 seconds before trying again.
+            </p>
+            <button
+              onClick={() => {
+                setIsRateLimited(false);
+                queryClient.invalidateQueries(['projects']);
+              }}
+              className="btn btn-primary text-sm"
+            >
+              Try Again
+            </button>
+          </div>
+        ) : isLoading ? (
           <LoadingSkeleton rows={8} showHeader={false} />
         ) : error ? (
           <div className="text-center py-12">
@@ -352,7 +422,10 @@ const ProjectsPage = () => {
               {error instanceof Error ? error.message : 'Please try refreshing the page'}
             </p>
             <button
-              onClick={() => queryClient.invalidateQueries(['projects', search, statusFilter, showArchived])}
+              onClick={() => {
+                setIsRateLimited(false);
+                queryClient.invalidateQueries(['projects']);
+              }}
               className="btn btn-primary text-sm"
             >
               Retry
@@ -439,9 +512,21 @@ const ProjectsPage = () => {
                         <p className="text-sm text-gray-900">{project.customer?.name || <span className="text-gray-400 italic">No customer</span>}</p>
                       </td>
                       <td className="px-4 py-4 whitespace-nowrap">
-                        <p className="text-sm text-gray-900">
-                          {project.manager ? `${project.manager.firstName} ${project.manager.lastName}` : <span className="text-gray-400 italic">Unassigned</span>}
-                        </p>
+                        {project.manager ? (
+                          <div className="flex items-center gap-2">
+                            <Avatar
+                              firstName={project.manager.firstName}
+                              lastName={project.manager.lastName}
+                              profilePicture={project.manager.profilePicture}
+                              size="sm"
+                            />
+                            <span className="text-sm text-gray-900">
+                              {project.manager.firstName} {project.manager.lastName}
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="text-sm text-gray-400 italic">Unassigned</span>
+                        )}
                       </td>
                       <td className="px-4 py-4 whitespace-nowrap">
                         <span
@@ -474,11 +559,11 @@ const ProjectsPage = () => {
             <FolderKanban className="w-12 h-12 text-gray-400 mx-auto mb-4" />
             <h3 className="text-sm font-medium text-gray-900 mb-1">No projects found</h3>
             <p className="text-sm text-gray-500 mb-6">
-              {search || statusFilter 
+              {debouncedSearch || statusFilter 
                 ? 'Try adjusting your search or filter criteria' 
                 : 'Get started by creating a new project'}
             </p>
-            {canCreate && !search && !statusFilter && (
+            {canCreate && !debouncedSearch && !statusFilter && (
               <Link to="/projects/new" className="btn btn-primary inline-flex items-center">
                 <Plus className="w-5 h-5 mr-2" />
                 Create Your First Project

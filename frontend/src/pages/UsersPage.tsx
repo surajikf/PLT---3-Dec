@@ -5,6 +5,7 @@ import { Plus, Search, ExternalLink, Users, Loader2, Filter, Trash2, MoreVertica
 import { roleLabels } from '../utils/roles';
 import { useState } from 'react';
 import Breadcrumbs from '../components/Breadcrumbs';
+import Avatar from '../components/Avatar';
 import { authService } from '../services/authService';
 import { UserRole } from '../utils/roles';
 import toast from 'react-hot-toast';
@@ -361,8 +362,18 @@ const UsersPage = () => {
                         />
                       </td>
                     )}
-                    <td className="px-4 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                      {userItem.firstName} {userItem.lastName}
+                    <td className="px-4 py-4 whitespace-nowrap">
+                      <div className="flex items-center gap-3">
+                        <Avatar
+                          firstName={userItem.firstName}
+                          lastName={userItem.lastName}
+                          profilePicture={userItem.profilePicture}
+                          size="sm"
+                        />
+                        <span className="text-sm font-medium text-gray-900">
+                          {userItem.firstName} {userItem.lastName}
+                        </span>
+                      </div>
                     </td>
                     <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">{userItem.email}</td>
                     <td className="px-4 py-4 whitespace-nowrap">

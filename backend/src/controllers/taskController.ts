@@ -2,10 +2,11 @@ import { Response, NextFunction } from 'express';
 import prisma from '../utils/prisma';
 import { NotFoundError, ForbiddenError, ValidationError } from '../utils/errors';
 import { AuthRequest } from '../middleware/auth';
+import { canTransitionTaskStatus, validateTaskData, TaskStatus, calculateTaskCompletion } from '../utils/taskWorkflow';
 
 export const getTasks = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { projectId, assignedToId, status, priority, stageId } = req.query;
+    const { projectId, assignedToId, status, priority, stageId, page = 1, limit = 50 } = req.query;
     const currentUser = req.user!;
 
     const where: any = {};
@@ -28,48 +29,77 @@ export const getTasks = async (req: AuthRequest, res: Response, next: NextFuncti
     if (priority) where.priority = priority;
     if (stageId) where.stageId = stageId;
 
-    const tasks = await prisma.task.findMany({
-      where,
-      include: {
-        project: {
-          select: {
-            id: true,
-            code: true,
-            name: true,
+    // Optimize pagination - enforce max limit
+    const pageNum = Math.max(1, Number(page) || 1);
+    const limitNum = Math.min(100, Math.max(1, Number(limit) || 50)); // Max 100 per page
+    const skip = (pageNum - 1) * limitNum;
+
+    // Execute queries in parallel for better performance
+    const [tasks, total] = await Promise.all([
+      prisma.task.findMany({
+        where,
+        skip,
+        take: limitNum,
+        select: {
+          id: true,
+          projectId: true,
+          assignedToId: true,
+          title: true,
+          description: true,
+          status: true,
+          priority: true,
+          dueDate: true,
+          stageId: true,
+          createdById: true,
+          createdAt: true,
+          updatedAt: true,
+          project: {
+            select: {
+              id: true,
+              code: true,
+              name: true,
+            },
+          },
+          assignedTo: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+            },
+          },
+          stage: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+          creator: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+            },
           },
         },
-        assignedTo: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            email: true,
-          },
-        },
-        stage: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
-        creator: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-          },
-        },
-      },
-      orderBy: [
-        { priority: 'desc' },
-        { dueDate: 'asc' },
-        { createdAt: 'desc' },
-      ],
-    });
+        orderBy: [
+          { priority: 'desc' },
+          { dueDate: 'asc' },
+          { createdAt: 'desc' },
+        ],
+      }),
+      prisma.task.count({ where }),
+    ]);
 
     res.json({
       success: true,
       data: tasks,
+      pagination: {
+        page: pageNum,
+        limit: limitNum,
+        total,
+        pages: Math.ceil(total / limitNum),
+      },
     });
   } catch (error) {
     next(error);
@@ -152,6 +182,21 @@ export const createTask = async (req: AuthRequest, res: Response, next: NextFunc
       }
     }
 
+    // Validate task data using workflow utility
+    const taskData = {
+      title,
+      description: description || '',
+      status: status || 'TODO',
+      priority: priority || 'MEDIUM',
+      dueDate: dueDate ? new Date(dueDate) : null,
+      assignedToId: assignedToId || null,
+    };
+
+    const validation = validateTaskData(taskData);
+    if (!validation.valid) {
+      throw new ValidationError(validation.errors.join(', '));
+    }
+
     const task = await prisma.task.create({
       data: {
         projectId,
@@ -231,7 +276,29 @@ export const updateTask = async (req: AuthRequest, res: Response, next: NextFunc
       }
     }
 
-    const updateData: any = {};
+    // Validate status transition if status is being changed
+    if (status && status !== task.status) {
+      const transitionCheck = canTransitionTaskStatus(
+        task.status as TaskStatus,
+        status as TaskStatus,
+        { ...task, assignedToId: assignedToId !== undefined ? assignedToId : task.assignedToId }
+      );
+
+      if (!transitionCheck.allowed) {
+        throw new ValidationError(
+          transitionCheck.message || 'Invalid status transition'
+        );
+      }
+
+      if (transitionCheck.missingRequirements && transitionCheck.missingRequirements.length > 0) {
+        throw new ValidationError(
+          `Cannot transition to ${status}: Missing required fields: ${transitionCheck.missingRequirements.join(', ')}`
+        );
+      }
+    }
+
+    // Validate task data
+    const updateData: any = { ...task };
     if (title !== undefined) updateData.title = title;
     if (description !== undefined) updateData.description = description;
     if (status !== undefined) updateData.status = status;
@@ -240,9 +307,24 @@ export const updateTask = async (req: AuthRequest, res: Response, next: NextFunc
     if (assignedToId !== undefined) updateData.assignedToId = assignedToId || null;
     if (stageId !== undefined) updateData.stageId = stageId || null;
 
+    const validation = validateTaskData(updateData, true);
+    if (!validation.valid) {
+      throw new ValidationError(validation.errors.join(', '));
+    }
+
+    // Build final update data object
+    const finalUpdateData: any = {};
+    if (title !== undefined) finalUpdateData.title = title;
+    if (description !== undefined) finalUpdateData.description = description;
+    if (status !== undefined) finalUpdateData.status = status;
+    if (priority !== undefined) finalUpdateData.priority = priority;
+    if (dueDate !== undefined) finalUpdateData.dueDate = dueDate ? new Date(dueDate) : null;
+    if (assignedToId !== undefined) finalUpdateData.assignedToId = assignedToId || null;
+    if (stageId !== undefined) finalUpdateData.stageId = stageId || null;
+
     const updated = await prisma.task.update({
       where: { id },
-      data: updateData,
+      data: finalUpdateData,
       include: {
         project: {
           select: {

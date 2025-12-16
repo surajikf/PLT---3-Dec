@@ -12,14 +12,24 @@ export const getDepartments = async (req: AuthRequest, res: Response, next: Next
       where.name = { contains: search as string, mode: 'insensitive' };
     }
 
-    const skip = (Number(page) - 1) * Number(limit);
+    // Optimize pagination - enforce max limit
+    const pageNum = Math.max(1, Number(page) || 1);
+    const limitNum = Math.min(100, Math.max(1, Number(limit) || 50)); // Max 100 per page
+    const skip = (pageNum - 1) * limitNum;
 
+    // Execute queries in parallel for better performance
     const [departments, total] = await Promise.all([
       prisma.department.findMany({
         where,
         skip,
-        take: Number(limit),
-        include: {
+        take: limitNum,
+        select: {
+          id: true,
+          name: true,
+          headId: true,
+          createdById: true,
+          createdAt: true,
+          updatedAt: true,
           head: {
             select: {
               id: true,
@@ -44,10 +54,10 @@ export const getDepartments = async (req: AuthRequest, res: Response, next: Next
       success: true,
       data: departments,
       pagination: {
-        page: Number(page),
-        limit: Number(limit),
+        page: pageNum,
+        limit: limitNum,
         total,
-        pages: Math.ceil(total / Number(limit)),
+        pages: Math.ceil(total / limitNum),
       },
     });
   } catch (error) {

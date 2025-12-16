@@ -7,6 +7,7 @@ import { Link } from 'react-router-dom';
 import { useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { useTableSort } from '../utils/tableSort';
+import Avatar from '../components/Avatar';
 
 const COLORS = ['#10b981', '#ef4444', '#3b82f6', '#f59e0b', '#8b5cf6'];
 
@@ -94,6 +95,36 @@ const ProfitLossPage = () => {
     getErrorMessage(employeesError) || 
     'Failed to load profit & loss data';
 
+  // Prepare data (use empty arrays if not loaded yet)
+  const summary = dashboardData?.summary || {};
+  const projects = projectsData?.projects || [];
+  const employees = employeesData || [];
+
+  // Table sorting for Projects - MUST be called before early returns (Rules of Hooks)
+  const { sortedData: sortedProjects, SortableHeader: ProjectSortableHeader } = useTableSort({
+    data: projects,
+    getValue: (item: any, field: string) => {
+      switch (field) {
+        case 'project':
+          return item.name || '';
+        case 'status':
+          return item.status || '';
+        case 'fixedCost':
+          return item.financials?.fixedProjectCost || 0;
+        case 'actualCost':
+          return item.financials?.totalActualCost || 0;
+        case 'hours':
+          return item.financials?.totalHours || 0;
+        case 'profitLoss':
+          return item.financials?.profitLoss || 0;
+        case 'margin':
+          return item.financials?.margin || 0;
+        default:
+          return (item as any)[field];
+      }
+    },
+  });
+
   if (dashboardLoading || projectsLoading || employeesLoading) {
     return (
       <div className="space-y-6">
@@ -164,35 +195,6 @@ const ProfitLossPage = () => {
       </div>
     );
   }
-
-  const summary = dashboardData?.summary || {};
-  const projects = projectsData?.projects || [];
-  const employees = employeesData || [];
-
-  // Table sorting for Projects
-  const { sortedData: sortedProjects, SortableHeader: ProjectSortableHeader } = useTableSort({
-    data: projects,
-    getValue: (item: any, field: string) => {
-      switch (field) {
-        case 'project':
-          return item.name || '';
-        case 'status':
-          return item.status || '';
-        case 'fixedCost':
-          return item.financials?.fixedProjectCost || 0;
-        case 'actualCost':
-          return item.financials?.totalActualCost || 0;
-        case 'hours':
-          return item.financials?.totalHours || 0;
-        case 'profitLoss':
-          return item.financials?.profitLoss || 0;
-        case 'margin':
-          return item.financials?.margin || 0;
-        default:
-          return (item as any)[field];
-      }
-    },
-  });
 
   // Prepare chart data
   const profitLossChartData = (projects || []).slice(0, 10).map((p: any) => {
@@ -546,15 +548,23 @@ const ProfitLossPage = () => {
                 {employees.map((employee: any) => (
                   <div key={employee.user.id} className="border border-gray-200 rounded-lg p-4">
                     <div className="flex justify-between items-start mb-3">
-                      <div>
-                        <h3 className="font-semibold text-gray-900">
-                          {employee.user.firstName} {employee.user.lastName}
-                        </h3>
-                        <p className="text-sm text-gray-500">{employee.user.email}</p>
-                        <p className="text-xs text-gray-400 mt-1">
-                          Hourly Rate: {formatCurrency(employee.user.hourlyRate || 0, { maximumFractionDigits: 0 })}/hr | 
-                          Role: {employee.user.role}
-                        </p>
+                      <div className="flex items-center gap-3">
+                        <Avatar
+                          firstName={employee.user.firstName}
+                          lastName={employee.user.lastName}
+                          profilePicture={employee.user.profilePicture}
+                          size="md"
+                        />
+                        <div>
+                          <h3 className="font-semibold text-gray-900">
+                            {employee.user.firstName} {employee.user.lastName}
+                          </h3>
+                          <p className="text-sm text-gray-500">{employee.user.email}</p>
+                          <p className="text-xs text-gray-400 mt-1">
+                            Hourly Rate: {formatCurrency(employee.user.hourlyRate || 0, { maximumFractionDigits: 0 })}/hr | 
+                            Role: {employee.user.role}
+                          </p>
+                        </div>
                       </div>
                       <div className="text-right">
                         <p className="text-sm text-gray-500">Total Cost</p>

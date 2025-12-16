@@ -9,6 +9,7 @@ import { formatCurrency } from '../utils/currency';
 import { format } from 'date-fns';
 import Breadcrumbs from '../components/Breadcrumbs';
 import { useTableSort } from '../utils/tableSort';
+import Avatar from '../components/Avatar';
 
 // Helper function to extract task name from description
 const extractTaskName = (description: string | null | undefined): string => {
@@ -248,6 +249,7 @@ const TimesheetsPage = () => {
 
     createTimesheetMutation.mutate({
       projectId: formData.projectId,
+      taskId: formData.taskId || null, // Include taskId if selected
       date: formData.date,
       hours: totalHours,
       description: fullDescription,
@@ -1016,16 +1018,24 @@ const TimesheetsPage = () => {
                     <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-900">
                       {format(new Date(timesheet.date), 'MMM dd, yyyy')}
                     </td>
-                    <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-900">
-                      <div className="flex flex-col">
-                        <span className="font-medium text-gray-900">
-                          {timesheet.user?.firstName && timesheet.user?.lastName
-                            ? `${timesheet.user.firstName} ${timesheet.user.lastName}`
-                            : timesheet.user?.email || 'N/A'}
-                        </span>
-                        {timesheet.user?.email && timesheet.user?.firstName && timesheet.user?.lastName && (
-                          <span className="text-xs text-gray-500">{timesheet.user.email}</span>
-                        )}
+                    <td className="px-4 py-4 whitespace-nowrap">
+                      <div className="flex items-center gap-2">
+                        <Avatar
+                          firstName={timesheet.user?.firstName}
+                          lastName={timesheet.user?.lastName}
+                          profilePicture={timesheet.user?.profilePicture}
+                          size="sm"
+                        />
+                        <div className="flex flex-col">
+                          <span className="text-sm font-medium text-gray-900">
+                            {timesheet.user?.firstName && timesheet.user?.lastName
+                              ? `${timesheet.user.firstName} ${timesheet.user.lastName}`
+                              : timesheet.user?.email || 'N/A'}
+                          </span>
+                          {timesheet.user?.email && timesheet.user?.firstName && timesheet.user?.lastName && (
+                            <span className="text-xs text-gray-500">{timesheet.user.email}</span>
+                          )}
+                        </div>
                       </div>
                     </td>
                     <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-900">

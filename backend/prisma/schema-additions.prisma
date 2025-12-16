@@ -1,0 +1,96 @@
+// Additional schema models for enhanced features
+// Add these to your main schema.prisma file
+
+model TaskDependency {
+  id            String   @id @default(uuid())
+  taskId        String
+  dependsOnTaskId String
+  createdAt     DateTime @default(now())
+
+  task        Task   @relation("TaskDependencies", fields: [taskId], references: [id], onDelete: Cascade)
+  dependsOnTask Task @relation("DependentTasks", fields: [dependsOnTaskId], references: [id], onDelete: Cascade)
+
+  @@unique([taskId, dependsOnTaskId])
+  @@index([taskId])
+  @@index([dependsOnTaskId])
+}
+
+model ProjectTemplate {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  stages      Json     // Array of stage IDs with weights
+  defaultBudget Float?
+  defaultDuration Int? // Days
+  isActive    Boolean  @default(true)
+  createdById String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  creator User @relation("TemplateCreator", fields: [createdById], references: [id])
+
+  @@index([isActive])
+}
+
+model ResourceCapacity {
+  id          String   @id @default(uuid())
+  userId      String   @unique
+  weeklyHours Float    @default(40) // Standard weekly capacity
+  currentAllocation Float @default(0) // Current hours allocated
+  startDate   DateTime?
+  endDate     DateTime? // For temporary capacity changes
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model ApprovalChain {
+  id          String   @id @default(uuid())
+  name        String
+  entityType  String   // TIMESHEET, PROJECT, etc.
+  steps       Json     // Array of approval steps with roles/users
+  isActive    Boolean  @default(true)
+  createdById String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  creator User @relation("ApprovalChainCreator", fields: [createdById], references: [id])
+
+  @@index([entityType, isActive])
+}
+
+model ApprovalRequest {
+  id            String   @id @default(uuid())
+  entityType    String
+  entityId      String
+  chainId       String
+  currentStep   Int      @default(0)
+  status        String   @default("PENDING") // PENDING, APPROVED, REJECTED
+  requestedById String
+  approvedById  String?
+  approvedAt    DateTime?
+  rejectedReason String?
+  metadata      Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  chain       ApprovalChain @relation(fields: [chainId], references: [id])
+  requester   User          @relation("ApprovalRequester", fields: [requestedById], references: [id])
+  approver    User?         @relation("ApprovalApprover", fields: [approvedById], references: [id])
+
+  @@index([entityType, entityId])
+  @@index([status])
+  @@index([requestedById])
+}
+
+// Add relations to User model:
+// templatesCreated ProjectTemplate[] @relation("TemplateCreator")
+// approvalChainsCreated ApprovalChain[] @relation("ApprovalChainCreator")
+// approvalRequests ApprovalRequest[] @relation("ApprovalRequester")
+// approvalsGiven ApprovalRequest[] @relation("ApprovalApprover")
+// resourceCapacity ResourceCapacity?
+

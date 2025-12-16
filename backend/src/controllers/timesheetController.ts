@@ -3,6 +3,8 @@ import prisma from '../utils/prisma';
 import { NotFoundError, ForbiddenError, ValidationError } from '../utils/errors';
 import { AuthRequest } from '../middleware/auth';
 import { validateHours, validateTimesheetDate } from '../utils/validation';
+import { validateTimesheetData, canSubmitTimesheet, canApproveTimesheet, checkDuplicateTimesheet, getTotalHoursForDate } from '../utils/timesheetWorkflow';
+import { validateProjectMemberForTimesheet } from '../utils/projectAutomation';
 
 export const getTimesheets = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
@@ -30,14 +32,30 @@ export const getTimesheets = async (req: AuthRequest, res: Response, next: NextF
       if (endDate) where.date.lte = new Date(endDate as string);
     }
 
-    const skip = (Number(page) - 1) * Number(limit);
+    // Optimize pagination - enforce max limit
+    const pageNum = Math.max(1, Number(page) || 1);
+    const limitNum = Math.min(100, Math.max(1, Number(limit) || 50)); // Max 100 per page
+    const skip = (pageNum - 1) * limitNum;
 
+    // Execute queries in parallel for better performance
     const [timesheets, total] = await Promise.all([
       prisma.timesheet.findMany({
         where,
         skip,
-        take: Number(limit),
-        include: {
+        take: limitNum,
+        select: {
+          id: true,
+          userId: true,
+          projectId: true,
+          date: true,
+          hours: true,
+          description: true,
+          status: true,
+          approvedById: true,
+          approvedAt: true,
+          rejectedReason: true,
+          createdAt: true,
+          updatedAt: true,
           user: {
             select: {
               id: true,
@@ -54,6 +72,15 @@ export const getTimesheets = async (req: AuthRequest, res: Response, next: NextF
               name: true,
             },
           },
+          // Task relation - optional, may not exist if migration not run
+          ...(process.env.SKIP_TASK_RELATION !== 'true' && {
+            task: {
+              select: {
+                id: true,
+                title: true,
+              },
+            },
+          }),
         },
         orderBy: { date: 'desc' },
       }),
@@ -70,10 +97,10 @@ export const getTimesheets = async (req: AuthRequest, res: Response, next: NextF
       success: true,
       data: timesheetsWithCost,
       pagination: {
-        page: Number(page),
-        limit: Number(limit),
+        page: pageNum,
+        limit: limitNum,
         total,
-        pages: Math.ceil(total / Number(limit)),
+        pages: Math.ceil(total / limitNum),
       },
     });
   } catch (error) {
@@ -83,7 +110,7 @@ export const getTimesheets = async (req: AuthRequest, res: Response, next: NextF
 
 export const createTimesheet = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { projectId, date, hours, description, status } = req.body;
+    const { projectId, taskId, date, hours, description, status } = req.body;
     const currentUser = req.user!;
 
     if (currentUser.role === 'CLIENT') {
@@ -108,21 +135,90 @@ export const createTimesheet = async (req: AuthRequest, res: Response, next: Nex
       throw new NotFoundError('Project not found');
     }
 
-    if (currentUser.role === 'TEAM_MEMBER') {
-      const isMember = project.members.some((m: any) => m.userId === currentUser.userId);
-      if (!isMember) {
-        throw new ForbiddenError('You are not assigned to this project');
-      }
+    // Enhanced validation using project automation utility
+    const memberValidation = await validateProjectMemberForTimesheet(
+      currentUser.userId,
+      projectId
+    );
+
+    if (!memberValidation.valid) {
+      throw new ValidationError(memberValidation.errors.join(', '));
+    }
+
+    // Log warnings if any (but don't block)
+    if (memberValidation.warnings.length > 0) {
+      console.warn('Timesheet validation warnings:', memberValidation.warnings);
+    }
+
+    // Enhanced validation using workflow utility
+    const timesheetData = {
+      date: entryDate,
+      hours: validatedHours,
+      description: description || '',
+      projectId,
+    };
+    
+    const validation = validateTimesheetData(timesheetData);
+    if (!validation.valid) {
+      throw new ValidationError(validation.errors.join(', '));
+    }
+
+    // Check for duplicate entries
+    const existingTimesheets = await prisma.timesheet.findMany({
+      where: {
+        userId: currentUser.userId,
+        projectId,
+        date: entryDate,
+        status: { not: 'REJECTED' },
+      },
+    });
+
+    if (checkDuplicateTimesheet(currentUser.userId, projectId, entryDate, existingTimesheets)) {
+      throw new ValidationError('A timesheet entry already exists for this date and project');
+    }
+
+    // Check total hours for the date
+    const totalHoursForDate = getTotalHoursForDate(existingTimesheets, entryDate);
+    if (totalHoursForDate + validatedHours > 24) {
+      throw new ValidationError(`Total hours for this date would exceed 24 hours (currently: ${totalHoursForDate.toFixed(1)}h)`);
     }
 
     // Default to SUBMITTED if status not provided (form submission)
     // Allow DRAFT for draft saves
     const timesheetStatus = status || 'SUBMITTED';
     
+    // Validate submission if status is SUBMITTED
+    if (timesheetStatus === 'SUBMITTED') {
+      const canSubmit = canSubmitTimesheet({
+        ...timesheetData,
+        status: 'DRAFT',
+      });
+      if (!canSubmit.canSubmit) {
+        throw new ValidationError(canSubmit.reason || 'Cannot submit timesheet');
+      }
+    }
+    
+    // Validate task if provided
+    if (taskId) {
+      const task = await prisma.task.findUnique({
+        where: { id: taskId },
+        select: { id: true, projectId: true },
+      });
+
+      if (!task) {
+        throw new ValidationError('Task not found');
+      }
+
+      if (task.projectId !== projectId) {
+        throw new ValidationError('Task does not belong to the selected project');
+      }
+    }
+
     const timesheet = await prisma.timesheet.create({
       data: {
         userId: currentUser.userId,
         projectId,
+        taskId: taskId || null,
         date: entryDate,
         hours: validatedHours,
         description: description || null,
@@ -204,6 +300,27 @@ export const updateTimesheet = async (req: AuthRequest, res: Response, next: Nex
     }
     if (description !== undefined) updateData.description = description;
     if (status) updateData.status = status;
+    
+    // Handle taskId update
+    if (req.body.taskId !== undefined) {
+      const taskId = req.body.taskId || null;
+      if (taskId) {
+        // Validate task if provided
+        const task = await prisma.task.findUnique({
+          where: { id: taskId },
+          select: { id: true, projectId: true },
+        });
+
+        if (!task) {
+          throw new ValidationError('Task not found');
+        }
+
+        if (task.projectId !== timesheet.projectId) {
+          throw new ValidationError('Task does not belong to the selected project');
+        }
+      }
+      updateData.taskId = taskId;
+    }
 
     const updated = await prisma.timesheet.update({
       where: { id },
@@ -224,8 +341,30 @@ export const updateTimesheet = async (req: AuthRequest, res: Response, next: Nex
             name: true,
           },
         },
+        task: {
+          select: {
+            id: true,
+            title: true,
+          },
+        },
       },
     });
+
+    // Update task actual hours if task is linked or changed
+    if (updateData.taskId !== undefined) {
+      const { updateTaskActualHours } = await import('../utils/taskDependencies');
+      if (updated.taskId) {
+        await updateTaskActualHours(updated.taskId);
+      }
+      // If task was changed, update old task too
+      if (timesheet.taskId && timesheet.taskId !== updated.taskId) {
+        await updateTaskActualHours(timesheet.taskId);
+      }
+    } else if (updated.taskId && (updateData.hours !== undefined || updateData.status !== undefined)) {
+      // Update task hours if hours or status changed and task is linked
+      const { updateTaskActualHours } = await import('../utils/taskDependencies');
+      await updateTaskActualHours(updated.taskId);
+    }
 
     res.json({
       success: true,
@@ -263,8 +402,10 @@ export const approveTimesheet = async (req: AuthRequest, res: Response, next: Ne
       throw new ForbiddenError('You can only approve timesheets for your projects');
     }
 
-    if (timesheet.status !== 'SUBMITTED') {
-      throw new ValidationError('Only submitted timesheets can be approved');
+    // Use workflow utility to validate approval
+    const canApprove = canApproveTimesheet(timesheet);
+    if (!canApprove.canApprove) {
+      throw new ValidationError(canApprove.reason || 'Cannot approve timesheet');
     }
 
     const updated = await prisma.timesheet.update({
@@ -292,6 +433,12 @@ export const approveTimesheet = async (req: AuthRequest, res: Response, next: Ne
         },
       },
     });
+
+    // Update task actual hours if task is linked
+    if (updated.taskId) {
+      const { updateTaskActualHours } = await import('../utils/taskDependencies');
+      await updateTaskActualHours(updated.taskId);
+    }
 
     res.json({
       success: true,
@@ -352,8 +499,20 @@ export const rejectTimesheet = async (req: AuthRequest, res: Response, next: Nex
             name: true,
           },
         },
+        task: {
+          select: {
+            id: true,
+            title: true,
+          },
+        },
       },
     });
+
+    // Update task actual hours if task is linked (rejection removes hours)
+    if (updated.taskId) {
+      const { updateTaskActualHours } = await import('../utils/taskDependencies');
+      await updateTaskActualHours(updated.taskId);
+    }
 
     res.json({
       success: true,

@@ -42,41 +42,10 @@ const RegisterPage = () => {
       return false;
     }
 
-    const errors: string[] = [];
-    let strength: 'weak' | 'medium' | 'strong' = 'weak';
-
-    if (password.length < 8) {
-      errors.push('At least 8 characters');
-    }
-    if (password.length > 128) {
-      errors.push('Less than 128 characters');
-    }
-    if (!/[A-Z]/.test(password)) {
-      errors.push('One uppercase letter');
-    }
-    if (!/[a-z]/.test(password)) {
-      errors.push('One lowercase letter');
-    }
-    if (!/[0-9]/.test(password)) {
-      errors.push('One number');
-    }
-    if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password)) {
-      errors.push('One special character');
-    }
-
-    if (errors.length === 0) {
-      if (password.length >= 12 && /[A-Z]/.test(password) && /[a-z]/.test(password) && /[0-9]/.test(password) && /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password)) {
-        strength = 'strong';
-      } else {
-        strength = 'medium';
-      }
-      setErrors(prev => ({ ...prev, password: undefined }));
-    } else {
-      setErrors(prev => ({ ...prev, password: `Password must contain: ${errors.join(', ')}` }));
-    }
-
-    setPasswordStrength(strength);
-    return errors.length === 0;
+    // No password strength requirements - user can set any password
+    setErrors(prev => ({ ...prev, password: undefined }));
+    setPasswordStrength('medium'); // Set default strength for UI
+    return true;
   };
 
   const validateName = (name: string, field: 'firstName' | 'lastName'): boolean => {
@@ -286,9 +255,6 @@ const RegisterPage = () => {
                   </div>
                 </div>
               )}
-              <p className="mt-1 text-xs text-gray-500">
-                Must contain: 8+ characters, uppercase, lowercase, number, and special character
-              </p>
             </div>
           </div>
 

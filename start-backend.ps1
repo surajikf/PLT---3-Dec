@@ -22,3 +22,6 @@ Write-Host "✅ Starting server on http://localhost:5000" -ForegroundColor Green
 Write-Host ""
 npm run dev
 
+
+
+

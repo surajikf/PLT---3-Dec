@@ -1,8 +1,9 @@
 import { Outlet, Link, useNavigate, useLocation } from 'react-router-dom';
 import { authService } from '../services/authService';
 import { UserRole, roleLabels } from '../utils/roles';
-import { LayoutDashboard, FolderKanban, Clock, BarChart3, LogOut, Link as LinkIcon, User, Menu, X, TrendingUp, Database } from 'lucide-react';
+import { LayoutDashboard, FolderKanban, Clock, BarChart3, LogOut, Link as LinkIcon, User, Menu, X, TrendingUp, Database, Settings } from 'lucide-react';
 import { useState } from 'react';
+import Avatar from './Avatar';
 
 const Layout = () => {
   const navigate = useNavigate();
@@ -86,11 +87,18 @@ const Layout = () => {
             {/* Right Section: User Info and Actions */}
             <div className="flex items-center flex-shrink-0 ml-3">
               <div className="flex items-center gap-2">
-                {/* Desktop User Info */}
-                <div className="hidden sm:flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg hover:bg-gray-50/80 backdrop-blur-sm transition-all duration-200">
-                  <div className="flex items-center justify-center w-9 h-9 rounded-full bg-gradient-to-br from-primary-500 via-primary-600 to-primary-700 text-white shadow-md ring-2 ring-white/50">
-                    <User className="w-4 h-4" />
-                  </div>
+                {/* Desktop User Info - Clickable to Profile */}
+                <Link
+                  to="/profile"
+                  className="hidden sm:flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg hover:bg-gray-50/80 backdrop-blur-sm transition-all duration-200 cursor-pointer"
+                  title="View Profile"
+                >
+                  <Avatar
+                    firstName={user?.firstName}
+                    lastName={user?.lastName}
+                    profilePicture={(user as any)?.profilePicture}
+                    size="sm"
+                  />
                   <div className="flex flex-col min-w-0">
                     <p className="text-sm font-semibold text-gray-900 leading-tight truncate max-w-[140px]">
                       {user?.firstName} {user?.lastName}
@@ -99,12 +107,31 @@ const Layout = () => {
                       {user && roleLabels[user.role as UserRole]}
                     </p>
                   </div>
-                </div>
+                </Link>
 
-                {/* Mobile User Avatar */}
-                <div className="sm:hidden flex items-center justify-center w-9 h-9 rounded-full bg-gradient-to-br from-primary-500 via-primary-600 to-primary-700 text-white shadow-md ring-2 ring-white/50">
-                  <User className="w-4 h-4" />
-                </div>
+                {/* Mobile User Avatar - Clickable to Profile */}
+                <Link
+                  to="/profile"
+                  className="sm:hidden"
+                  title="View Profile"
+                >
+                  <Avatar
+                    firstName={user?.firstName}
+                    lastName={user?.lastName}
+                    profilePicture={(user as any)?.profilePicture}
+                    size="sm"
+                  />
+                </Link>
+
+                {/* Profile Settings Button (Mobile) */}
+                <Link
+                  to="/profile"
+                  className="sm:hidden inline-flex items-center justify-center w-9 h-9 rounded-lg text-gray-500 hover:text-gray-700 hover:bg-gray-100/80 backdrop-blur-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 transition-all duration-200"
+                  title="Profile Settings"
+                  aria-label="Profile Settings"
+                >
+                  <Settings className="w-5 h-5" />
+                </Link>
 
                 {/* Logout Button */}
                 <button

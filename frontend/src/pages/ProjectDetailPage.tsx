@@ -11,6 +11,8 @@ import toast from 'react-hot-toast';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import Breadcrumbs from '../components/Breadcrumbs';
 import { useTableSort } from '../utils/tableSort';
+import ConfirmDialog from '../components/ConfirmDialog';
+import Avatar from '../components/Avatar';
 
 const ProjectDetailPage = () => {
   const { id } = useParams();
@@ -37,13 +39,20 @@ const ProjectDetailPage = () => {
     onConfirm: () => {},
   });
 
-  const { data: project, isLoading } = useQuery(
+  const { data: project, isLoading, isError, error } = useQuery(
     ['project', id],
     async () => {
       const res = await api.get(`/projects/${id}`);
       return res.data.data;
     },
-    { enabled: !!id }
+    { 
+      enabled: !!id,
+      onError: (error: any) => {
+        const errorMessage = error.userMessage || error.response?.data?.error || 'Failed to load project';
+        toast.error(errorMessage);
+      },
+      retry: 2,
+    }
   );
 
   // Fetch both explicit tasks and tasks from timesheets
@@ -67,9 +76,9 @@ const ProjectDetailPage = () => {
   );
 
   // Determine user permissions (before early returns to ensure hooks are always called)
-  const canEdit = user && [UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER].includes(user.role as UserRole);
+  const canEdit = !!(user && [UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER].includes(user.role as UserRole));
   const isEmployee = user?.role === UserRole.TEAM_MEMBER;
-  const canViewFinancials = user && [UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER].includes(user.role as UserRole);
+  const canViewFinancials = !!(user && [UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER].includes(user.role as UserRole));
 
   // Fetch employee's timesheet data for this project (must be before early returns)
   const { data: employeeTimesheets } = useQuery(
@@ -228,43 +237,7 @@ const ProjectDetailPage = () => {
     updateStageMutation.mutate({ projectStageId, status: newStatus });
   };
 
-  if (isLoading) {
-    return (
-      <div className="flex flex-col items-center justify-center h-64">
-        <Loader2 className="w-8 h-8 animate-spin text-primary-600 mb-4" />
-        <p className="text-gray-500">Loading project...</p>
-      </div>
-    );
-  }
-
-  if (!project) {
-    return (
-      <div className="text-center py-12">
-        <p className="text-gray-500 mb-4">Project not found</p>
-        <button onClick={() => navigate('/projects')} className="btn btn-primary">
-          Back to Projects
-        </button>
-      </div>
-    );
-  }
-
-  // Calculate budget metrics (after project is confirmed to exist)
-  const budgetUtilization = project?.budget > 0 ? ((project.totalCost || 0) / project.budget) * 100 : 0;
-  const isOverBudget = (project?.totalCost || 0) > (project?.budget || 0);
-  const isAtRisk = budgetUtilization > 90;
-
-  // Chart data for budget visualization
-  const budgetData = [
-    { name: 'Budget', value: project.budget || 0, fill: '#3b82f6' },
-    { name: 'Spent', value: project.totalCost || 0, fill: isOverBudget ? '#ef4444' : '#10b981' },
-  ];
-
-  const progressData = project.stages?.map((stage: any) => ({
-    name: stage.stage.name,
-    progress: stage.status === 'CLOSED' ? 100 : stage.status === 'IN_PROGRESS' ? 50 : 0,
-  })) || [];
-
-  // Calculate hours analytics for admins/managers (must be before sorting hooks)
+  // Calculate hours analytics for admins/managers (MUST be before early returns to follow Rules of Hooks)
   const hoursAnalytics = useMemo(() => {
     try {
       if (!canViewFinancials || !projectTimesheets || !Array.isArray(projectTimesheets) || projectTimesheets.length === 0) {
@@ -383,7 +356,7 @@ const ProjectDetailPage = () => {
     },
   });
 
-  // Table sorting for Team Members
+  // Table sorting for Team Members (MUST be before early returns)
   const { sortedData: sortedTeamMembers, SortableHeader: TeamSortableHeader } = useTableSort({
     data: project?.members?.filter(Boolean) || [],
     getValue: (item: any, field: string) => {
@@ -401,6 +374,57 @@ const ProjectDetailPage = () => {
       }
     },
   });
+
+  // Calculate budget metrics (MUST be before early returns, using optional chaining)
+  const budgetUtilization = project?.budget > 0 ? ((project.totalCost || 0) / project.budget) * 100 : 0;
+  const isOverBudget = (project?.totalCost || 0) > (project?.budget || 0);
+  const isAtRisk = budgetUtilization > 90;
+
+  // Chart data for budget visualization (MUST be before early returns)
+  const budgetData = [
+    { name: 'Budget', value: project?.budget || 0, fill: '#3b82f6' },
+    { name: 'Spent', value: project?.totalCost || 0, fill: isOverBudget ? '#ef4444' : '#10b981' },
+  ];
+
+  const progressData = project?.stages?.map((stage: any) => ({
+    name: stage.stage.name,
+    progress: stage.status === 'CLOSED' ? 100 : stage.status === 'IN_PROGRESS' ? 50 : 0,
+  })) || [];
+
+  // Early returns AFTER all hooks
+  if (isLoading) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64">
+        <Loader2 className="w-8 h-8 animate-spin text-primary-600 mb-4" />
+        <p className="text-gray-500">Loading project...</p>
+      </div>
+    );
+  }
+
+  if (isError) {
+    const errorMessage = (error as any)?.userMessage || (error as any)?.response?.data?.error || 'Failed to load project';
+    return (
+      <div className="text-center py-12">
+        <AlertCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
+        <p className="text-gray-900 font-semibold mb-2">Error loading project</p>
+        <p className="text-gray-500 mb-4">{errorMessage}</p>
+        <button onClick={() => navigate('/projects')} className="btn btn-primary">
+          Back to Projects
+        </button>
+      </div>
+    );
+  }
+
+  if (!project) {
+    return (
+      <div className="text-center py-12">
+        <p className="text-gray-500 mb-4">Project not found</p>
+        <button onClick={() => navigate('/projects')} className="btn btn-primary">
+          Back to Projects
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -476,11 +500,19 @@ const ProjectDetailPage = () => {
           {project.manager && (
             <div className="flex items-start gap-2">
               <Users className="w-5 h-5 text-gray-400 mt-0.5 flex-shrink-0" />
-              <div>
-                <p className="text-xs text-gray-500 uppercase tracking-wide">Project Manager</p>
-                <p className="text-sm font-semibold text-gray-900">
-                  {project.manager.firstName} {project.manager.lastName}
-                </p>
+              <div className="flex items-center gap-2">
+                <Avatar
+                  firstName={project.manager.firstName}
+                  lastName={project.manager.lastName}
+                  profilePicture={project.manager.profilePicture}
+                  size="sm"
+                />
+                <div>
+                  <p className="text-xs text-gray-500 uppercase tracking-wide">Project Manager</p>
+                  <p className="text-sm font-semibold text-gray-900">
+                    {project.manager.firstName} {project.manager.lastName}
+                  </p>
+                </div>
               </div>
             </div>
           )}
@@ -1098,21 +1130,40 @@ const ProjectDetailPage = () => {
                     )}
                     {canEdit && (
                       <div className="mt-3 flex gap-2">
-                        {projectStage.status !== 'CLOSED' && (
+                        {projectStage.status === 'OFF' && (
+                          <button
+                            onClick={() => handleStageUpdate(projectStage.id, 'ON')}
+                            className="btn btn-secondary text-sm"
+                          >
+                            Activate
+                          </button>
+                        )}
+                        {projectStage.status === 'ON' && (
                           <>
                             <button
                               onClick={() => handleStageUpdate(projectStage.id, 'IN_PROGRESS')}
-                              className="btn btn-secondary text-sm"
+                              className="btn btn-primary text-sm"
                             >
-                              Start
+                              Start Progress
                             </button>
                             <button
                               onClick={() => handleStageUpdate(projectStage.id, 'CLOSED')}
-                              className="btn btn-primary text-sm"
+                              className="btn btn-success text-sm"
                             >
                               Close
                             </button>
                           </>
+                        )}
+                        {projectStage.status === 'IN_PROGRESS' && (
+                          <button
+                            onClick={() => handleStageUpdate(projectStage.id, 'CLOSED')}
+                            className="btn btn-success text-sm"
+                          >
+                            Close Stage
+                          </button>
+                        )}
+                        {projectStage.status === 'CLOSED' && (
+                          <span className="text-sm text-gray-500 italic">Stage completed</span>
                         )}
                       </div>
                     )}
@@ -1160,8 +1211,18 @@ const ProjectDetailPage = () => {
                       const user = member.user;
                       return (
                         <tr key={member.id}>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                            {user.firstName || ''} {user.lastName || ''}
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="flex items-center gap-3">
+                              <Avatar
+                                firstName={user.firstName}
+                                lastName={user.lastName}
+                                profilePicture={user.profilePicture}
+                                size="sm"
+                              />
+                              <span className="text-sm font-medium text-gray-900">
+                                {user.firstName || ''} {user.lastName || ''}
+                              </span>
+                            </div>
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{user.email || 'N/A'}</td>
                           <td className="px-6 py-4 whitespace-nowrap">
@@ -1199,18 +1260,30 @@ const ProjectDetailPage = () => {
                                     title: 'Remove Employee',
                                     message: `Are you sure you want to remove ${user.firstName} ${user.lastName} from this project? They will no longer be able to log time for this project.`,
                                     type: 'warning',
-                                  onConfirm: () => {
-                                    // API call to remove member would go here
-                                    // For now, we'll need to create an endpoint or use project update
-                                    toast.error('Remove member functionality requires backend endpoint');
-                                    setConfirmDialog(prev => ({ ...prev, isOpen: false }));
-                                  },
-                                });
-                              }}
-                              className="text-red-600 hover:text-red-700"
-                            >
-                              Remove
-                            </button>
+                                    onConfirm: async () => {
+                                      try {
+                                        // Get current members and remove the selected one
+                                        const currentMemberIds = (project?.members || [])
+                                          .map((m: any) => m.userId || m.user?.id)
+                                          .filter((memberId: string) => memberId !== (user.id || member.userId));
+                                        
+                                        // Update members list via API
+                                        await api.post(`/projects/${id}/members`, { userIds: currentMemberIds });
+                                        toast.success('Team member removed successfully');
+                                        queryClient.invalidateQueries(['project', id]);
+                                        setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+                                      } catch (error: any) {
+                                        const errorMessage = error.response?.data?.error || 'Failed to remove team member';
+                                        toast.error(errorMessage);
+                                        setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+                                      }
+                                    },
+                                  });
+                                }}
+                                className="text-red-600 hover:text-red-700 font-medium"
+                              >
+                                Remove
+                              </button>
                           </td>
                           )}
                         </tr>
@@ -1270,7 +1343,7 @@ const ProjectDetailPage = () => {
                           <TaskCard 
                             key={task.id} 
                             task={task} 
-                            canEdit={canEdit}
+                            canEdit={!!canEdit}
                             onEdit={() => {
                               setEditingTask(task);
                               setTaskModalOpen(true);
@@ -1463,10 +1536,20 @@ const ProjectDetailPage = () => {
       {teamMemberModalOpen && (
         <TeamMemberModal
           projectId={id!}
-          existingMembers={project?.members?.map((m: any) => m.userId) || []}
+          existingMembers={project?.members?.map((m: any) => m.userId || m.user?.id) || []}
           onClose={() => setTeamMemberModalOpen(false)}
         />
       )}
+
+      {/* Confirm Dialog */}
+      <ConfirmDialog
+        isOpen={confirmDialog.isOpen}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        type={confirmDialog.type}
+        onConfirm={confirmDialog.onConfirm}
+        onCancel={() => setConfirmDialog(prev => ({ ...prev, isOpen: false }))}
+      />
     </div>
   );
 };
@@ -1930,7 +2013,9 @@ const TeamMemberModal = ({ projectId, existingMembers, onClose }: { projectId: s
 
   const addMembersMutation = useMutation(
     async (userIds: string[]) => {
-      const res = await api.post(`/projects/${projectId}/members`, { userIds });
+      // Combine existing members with new ones to avoid replacing
+      const allMemberIds = [...existingMembers, ...userIds];
+      const res = await api.post(`/projects/${projectId}/members`, { userIds: allMemberIds });
       return res.data;
     },
     {
@@ -1983,6 +2068,13 @@ const TeamMemberModal = ({ projectId, existingMembers, onClose }: { projectId: s
                     type="checkbox"
                     checked={selectedUserIds.includes(user.id)}
                     onChange={() => toggleUser(user.id)}
+                    className="mr-3"
+                  />
+                  <Avatar
+                    firstName={user.firstName}
+                    lastName={user.lastName}
+                    profilePicture={user.profilePicture}
+                    size="sm"
                     className="mr-3"
                   />
                   <div>
@@ -2055,8 +2147,13 @@ const TaskCard = ({
 
           <div className="flex flex-wrap items-center gap-3 text-xs text-gray-600">
             {task.assignedTo && (
-              <div className="flex items-center gap-1">
-                <Users className="w-3 h-3" />
+              <div className="flex items-center gap-1.5">
+                <Avatar
+                  firstName={task.assignedTo.firstName}
+                  lastName={task.assignedTo.lastName}
+                  profilePicture={task.assignedTo.profilePicture}
+                  size="xs"
+                />
                 <span>{task.assignedTo.firstName} {task.assignedTo.lastName}</span>
               </div>
             )}

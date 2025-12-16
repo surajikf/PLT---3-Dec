@@ -17,14 +17,28 @@ export const getCustomers = async (req: AuthRequest, res: Response, next: NextFu
       ];
     }
 
-    const skip = (Number(page) - 1) * Number(limit);
+    // Optimize pagination - enforce max limit
+    const pageNum = Math.max(1, Number(page) || 1);
+    const limitNum = Math.min(100, Math.max(1, Number(limit) || 50)); // Max 100 per page
+    const skip = (pageNum - 1) * limitNum;
 
+    // Execute queries in parallel for better performance
     const [customers, total] = await Promise.all([
       prisma.customer.findMany({
         where,
         skip,
-        take: Number(limit),
-        include: {
+        take: limitNum,
+        select: {
+          id: true,
+          name: true,
+          industry: true,
+          contactPerson: true,
+          email: true,
+          phone: true,
+          address: true,
+          status: true,
+          createdAt: true,
+          updatedAt: true,
           _count: {
             select: {
               projects: true,
@@ -40,10 +54,10 @@ export const getCustomers = async (req: AuthRequest, res: Response, next: NextFu
       success: true,
       data: customers,
       pagination: {
-        page: Number(page),
-        limit: Number(limit),
+        page: pageNum,
+        limit: limitNum,
         total,
-        pages: Math.ceil(total / Number(limit)),
+        pages: Math.ceil(total / limitNum),
       },
     });
   } catch (error) {

@@ -22,6 +22,7 @@
     "add-resources": "tsx scripts/add-resources.ts",
     "check-resources": "tsx scripts/check-resources.ts",
     "add-realistic-3year": "tsx scripts/add-realistic-3year-data.ts",
+    "add-2year-indian-data": "tsx scripts/add-2year-indian-dummy-data.ts",
     "check-health": "tsx scripts/check-api-health.ts",
     "update-projects": "tsx scripts/update-projects-with-customers-and-budgets.ts",
     "check-db": "tsx scripts/check-database-tables.ts",

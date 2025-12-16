@@ -7,7 +7,7 @@ const isDevelopment = process.env.NODE_ENV === 'development';
 // General API rate limiter
 export const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: isDevelopment ? 5000 : 100, // Very high limit in development to prevent 429 errors
+  max: isDevelopment ? 50000 : 100, // Very high limit in development to prevent 429 errors
   message: {
     success: false,
     error: 'Too many requests from this IP, please try again later.',
@@ -62,7 +62,7 @@ export const writeLimiter = rateLimit({
 // Lenient rate limiter for read operations
 export const readLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: isDevelopment ? 10000 : 200, // Very high limit in development to prevent 429 errors
+  max: isDevelopment ? 100000 : 200, // Very high limit in development to prevent 429 errors
   message: {
     success: false,
     error: 'Too many read requests, please try again later.',

@@ -32,6 +32,12 @@ import reportRoutes from './routes/reportRoutes';
 import stageRoutes from './routes/stageRoutes';
 import taskRoutes from './routes/taskRoutes';
 import profitLossRoutes from './routes/profitLossRoutes';
+import templateRoutes from './routes/templateRoutes';
+import taskDependencyRoutes from './routes/taskDependencyRoutes';
+import resourceCapacityRoutes from './routes/resourceCapacityRoutes';
+import analyticsRoutes from './routes/analyticsRoutes';
+import scheduledJobsRoutes from './routes/scheduledJobsRoutes';
+import approvalChainRoutes from './routes/approvalChainRoutes';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -95,7 +101,13 @@ app.use('/api/resources', writeLimiter, resourceRoutes);
 app.use('/api/reports', readLimiter, reportRoutes);
 app.use('/api/stages', writeLimiter, stageRoutes);
 app.use('/api/tasks', writeLimiter, taskRoutes);
+app.use('/api/tasks', writeLimiter, taskDependencyRoutes);
 app.use('/api/profit-loss', readLimiter, profitLossRoutes);
+app.use('/api/templates', writeLimiter, templateRoutes);
+app.use('/api/capacity', readLimiter, resourceCapacityRoutes);
+app.use('/api/analytics', readLimiter, analyticsRoutes);
+app.use('/api/jobs', writeLimiter, scheduledJobsRoutes);
+app.use('/api/approval-chains', writeLimiter, approvalChainRoutes);
 
 // Error handler (must be last)
 app.use(errorHandler);

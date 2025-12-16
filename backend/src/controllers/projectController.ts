@@ -3,6 +3,8 @@ import prisma from '../utils/prisma';
 import { NotFoundError, ForbiddenError, ValidationError } from '../utils/errors';
 import { AuthRequest } from '../middleware/auth';
 import { validateProjectCode, validateBudget, validateDateRange } from '../utils/validation';
+import { canTransitionStatus, calculateProjectHealthScore, validateProjectData, ProjectStatus } from '../utils/projectWorkflow';
+import { autoCompleteProjectIfReady, calculateAndUpdateProjectProgress, validateProjectMemberForTimesheet, getProjectHealthRecommendations } from '../utils/projectAutomation';
 
 export const getProjects = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
@@ -79,17 +81,34 @@ export const getProjects = async (req: AuthRequest, res: Response, next: NextFun
     // Use where directly - it already has all filters including archive filter
     const finalWhere = where;
 
-    const skip = (Number(page) - 1) * Number(limit);
+    // Optimize pagination - enforce max limit
+    const pageNum = Math.max(1, Number(page) || 1);
+    const limitNum = Math.min(100, Math.max(1, Number(limit) || 50)); // Max 100 per page
+    const skip = (pageNum - 1) * limitNum;
 
     // Include members relation for employees to enable frontend filtering
     const includeMembers = currentUser.role === 'TEAM_MEMBER';
     
+    // Optimize: Execute count and data queries in parallel
+    // Use select instead of include where possible to reduce data transfer
     const [projects, total] = await Promise.all([
       prisma.project.findMany({
         where: finalWhere,
         skip,
-        take: Number(limit),
-        include: {
+        take: limitNum,
+        select: {
+          id: true,
+          code: true,
+          name: true,
+          description: true,
+          status: true,
+          budget: true,
+          startDate: true,
+          endDate: true,
+          healthScore: true,
+          isArchived: true,
+          createdAt: true,
+          updatedAt: true,
           customer: {
             select: {
               id: true,
@@ -138,10 +157,10 @@ export const getProjects = async (req: AuthRequest, res: Response, next: NextFun
       success: true,
       data: projects,
       pagination: {
-        page: Number(page),
-        limit: Number(limit),
+        page: pageNum,
+        limit: limitNum,
         total,
-        pages: Math.ceil(total / Number(limit)),
+        pages: Math.ceil(total / limitNum),
       },
     });
   } catch (error: any) {
@@ -281,7 +300,8 @@ export const getProjectById = async (req: AuthRequest, res: Response, next: Next
       .filter((ps: any) => ps.status === 'CLOSED')
       .reduce((sum: number, ps: any) => sum + ps.weight, 0);
 
-    const healthScore = calculateHealthScore(project.budget, totalCost, progress);
+    // Calculate comprehensive health score using workflow utility
+    const healthScore = calculateProjectHealthScore(project, timesheets);
 
     // Calculate profit/loss for admin users
     const fixedProjectCost = project.budget || 0;
@@ -460,6 +480,41 @@ export const updateProject = async (req: AuthRequest, res: Response, next: NextF
       }
     }
 
+    // Validate project data if provided
+    const { code, name, description, customerId, managerId, departmentId, budget, startDate, endDate, status } = req.body;
+    const dataToValidate: any = { ...project };
+    if (code !== undefined) dataToValidate.code = code;
+    if (name !== undefined) dataToValidate.name = name;
+    if (budget !== undefined) dataToValidate.budget = budget;
+    if (startDate !== undefined) dataToValidate.startDate = startDate;
+    if (endDate !== undefined) dataToValidate.endDate = endDate;
+
+    const validation = validateProjectData(dataToValidate, true);
+    if (!validation.valid) {
+      throw new ValidationError(validation.errors.join(', '));
+    }
+
+    // Validate status transition if status is being changed
+    if (status && status !== project.status) {
+      const transitionCheck = canTransitionStatus(
+        project.status as ProjectStatus,
+        status as ProjectStatus,
+        { ...project, ...updateData }
+      );
+      
+      if (!transitionCheck.allowed) {
+        throw new ValidationError(
+          transitionCheck.message || 'Invalid status transition'
+        );
+      }
+      
+      if (transitionCheck.missingRequirements && transitionCheck.missingRequirements.length > 0) {
+        throw new ValidationError(
+          `Cannot transition to ${status}: Missing required fields: ${transitionCheck.missingRequirements.join(', ')}`
+        );
+      }
+    }
+
     const allowedFields = ['name', 'description', 'status', 'budget', 'startDate', 'endDate', 'managerId', 'departmentId', 'healthScore'];
     allowedFields.forEach((field) => {
       if (req.body[field] !== undefined) {
@@ -500,6 +555,7 @@ export const assignMembers = async (req: AuthRequest, res: Response, next: NextF
 
     const project = await prisma.project.findUnique({
       where: { id },
+      select: { id: true, managerId: true }, // Only select needed fields
     });
 
     if (!project) {
@@ -513,38 +569,49 @@ export const assignMembers = async (req: AuthRequest, res: Response, next: NextF
       }
     }
 
-    // Remove existing members
-    await prisma.projectMember.deleteMany({
-      where: { projectId: id },
-    });
-
-    // Add new members
-    if (userIds && Array.isArray(userIds)) {
-      await prisma.projectMember.createMany({
-        data: userIds.map((userId: string) => ({
-          projectId: id,
-          userId,
-        })),
-        skipDuplicates: true,
+    // Use transaction for atomic operation - all or nothing
+    const updatedProject = await prisma.$transaction(async (tx) => {
+      // Remove existing members
+      await tx.projectMember.deleteMany({
+        where: { projectId: id },
       });
-    }
 
-    const updatedProject = await prisma.project.findUnique({
-      where: { id },
-      include: {
-        members: {
-          include: {
-            user: {
-              select: {
-                id: true,
-                firstName: true,
-                lastName: true,
-                email: true,
+      // Add new members in batch
+      if (userIds && Array.isArray(userIds) && userIds.length > 0) {
+        await tx.projectMember.createMany({
+          data: userIds.map((userId: string) => ({
+            projectId: id,
+            userId,
+          })),
+          skipDuplicates: true,
+        });
+      }
+
+      // Fetch updated project with optimized select
+      return await tx.project.findUnique({
+        where: { id },
+        select: {
+          id: true,
+          code: true,
+          name: true,
+          members: {
+            select: {
+              id: true,
+              userId: true,
+              assignedAt: true,
+              user: {
+                select: {
+                  id: true,
+                  firstName: true,
+                  lastName: true,
+                  email: true,
+                  role: true,
+                },
               },
             },
           },
         },
-      },
+      });
     });
 
     res.json({
@@ -610,6 +677,12 @@ export const updateProjectStage = async (req: AuthRequest, res: Response, next: 
         },
       },
     });
+
+    // Auto-complete project if all stages are closed
+    await autoCompleteProjectIfReady(projectId);
+    
+    // Recalculate project progress
+    await calculateAndUpdateProjectProgress(projectId);
 
     res.json({
       success: true,
@@ -752,9 +825,5 @@ export const bulkRestoreProjects = async (req: AuthRequest, res: Response, next:
   }
 };
 
-function calculateHealthScore(budget: number, totalCost: number, progress: number): number {
-  const budgetHealth = budget > 0 ? Math.max(0, 100 - (totalCost / budget) * 100) : 100;
-  const progressHealth = progress;
-  return Math.round((budgetHealth + progressHealth) / 2);
-}
+// Health score calculation moved to projectWorkflow.ts for comprehensive scoring
 

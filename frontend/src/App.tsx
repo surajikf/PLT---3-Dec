@@ -21,6 +21,7 @@ const DepartmentsPage = lazy(() => import('./pages/DepartmentsPage'));
 const ProfitLossPage = lazy(() => import('./pages/ProfitLossPage'));
 const ProjectCreatePage = lazy(() => import('./pages/ProjectCreatePage'));
 const MasterManagementPage = lazy(() => import('./pages/MasterManagementPage'));
+const ProfilePage = lazy(() => import('./pages/ProfilePage'));
 const Layout = lazy(() => import('./components/Layout'));
 
 function App() {
@@ -107,6 +108,7 @@ function App() {
               </ProtectedRoute>
             }
           />
+          <Route path="profile" element={<ProfilePage />} />
           </Route>
         </Routes>
         </Suspense>

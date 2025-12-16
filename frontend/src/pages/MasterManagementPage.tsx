@@ -27,6 +27,8 @@ import { formatCurrency } from '../utils/currency';
 import { roleLabels } from '../utils/roles';
 import { authService } from '../services/authService';
 import { useTableSort } from '../utils/tableSort';
+import Avatar from '../components/Avatar';
+import ConfirmDialog from '../components/ConfirmDialog';
 
 type TabType = 'customers' | 'projects' | 'employees' | 'departments' | 'stages';
 
@@ -434,6 +436,14 @@ const CustomersManagement = () => {
           }}
         />
       )}
+      <ConfirmDialog
+        isOpen={confirmDialog.isOpen}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        type={confirmDialog.type}
+        onConfirm={confirmDialog.onConfirm}
+        onCancel={() => setConfirmDialog(prev => ({ ...prev, isOpen: false }))}
+      />
     </div>
   );
 };
@@ -825,6 +835,14 @@ const ProjectsManagement = () => {
           }}
         />
       )}
+      <ConfirmDialog
+        isOpen={confirmDialog.isOpen}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        type={confirmDialog.type}
+        onConfirm={confirmDialog.onConfirm}
+        onCancel={() => setConfirmDialog(prev => ({ ...prev, isOpen: false }))}
+      />
     </div>
   );
 };
@@ -1238,8 +1256,18 @@ const EmployeesManagement = () => {
             <tbody className="bg-white divide-y divide-gray-200">
               {sortedEmployees.map((employee: any) => (
                 <tr key={employee.id} className="hover:bg-gray-50">
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                    {employee.firstName} {employee.lastName}
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <div className="flex items-center gap-3">
+                      <Avatar
+                        firstName={employee.firstName}
+                        lastName={employee.lastName}
+                        profilePicture={employee.profilePicture}
+                        size="sm"
+                      />
+                      <span className="text-sm font-medium text-gray-900">
+                        {employee.firstName} {employee.lastName}
+                      </span>
+                    </div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                     {employee.email}
@@ -1308,6 +1336,14 @@ const EmployeesManagement = () => {
           }}
         />
       )}
+      <ConfirmDialog
+        isOpen={confirmDialog.isOpen}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        type={confirmDialog.type}
+        onConfirm={confirmDialog.onConfirm}
+        onCancel={() => setConfirmDialog(prev => ({ ...prev, isOpen: false }))}
+      />
     </div>
   );
 };
@@ -1378,14 +1414,10 @@ const EmployeeModal = ({ employee, onClose }: { employee: any; onClose: () => vo
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     
-    // Validate password length for new employees
+    // Validate password is provided for new employees
     if (!employee) {
       if (!formData.password) {
         toast.error('Password is required for new employees');
-        return;
-      }
-      if (formData.password.length < 8) {
-        toast.error('Password must be at least 8 characters long');
         return;
       }
     }
@@ -1465,11 +1497,7 @@ const EmployeeModal = ({ employee, onClose }: { employee: any; onClose: () => vo
                   value={formData.password}
                   onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                   className="input"
-                  minLength={8}
                 />
-                <p className="mt-1 text-xs text-gray-500">
-                  Password must be at least 8 characters long
-                </p>
               </div>
             )}
             <div>
@@ -1721,6 +1749,14 @@ const DepartmentsManagement = () => {
           }}
         />
       )}
+      <ConfirmDialog
+        isOpen={confirmDialog.isOpen}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        type={confirmDialog.type}
+        onConfirm={confirmDialog.onConfirm}
+        onCancel={() => setConfirmDialog(prev => ({ ...prev, isOpen: false }))}
+      />
     </div>
   );
 };
@@ -2022,6 +2058,14 @@ const StagesManagement = () => {
           }}
         />
       )}
+      <ConfirmDialog
+        isOpen={confirmDialog.isOpen}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        type={confirmDialog.type}
+        onConfirm={confirmDialog.onConfirm}
+        onCancel={() => setConfirmDialog(prev => ({ ...prev, isOpen: false }))}
+      />
     </div>
   );
 };
