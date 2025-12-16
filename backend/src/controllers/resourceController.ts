@@ -1,7 +1,8 @@
 import { Response, NextFunction } from 'express';
 import prisma from '../utils/prisma';
-import { NotFoundError, ForbiddenError } from '../utils/errors';
+import { NotFoundError, ForbiddenError, ValidationError } from '../utils/errors';
 import { AuthRequest } from '../middleware/auth';
+import { sanitizeString } from '../utils/sanitize';
 
 export const getResources = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
@@ -124,11 +125,66 @@ export const createResource = async (req: AuthRequest, res: Response, next: Next
 
     const { name, description, type, projectId, url, accessLevel } = req.body;
 
+    // Validate required fields
+    if (!name || !name.trim()) {
+      throw new ValidationError('Resource name is required');
+    }
+
+    // Validate and sanitize name
+    const sanitizedName = sanitizeString(name, 200);
+    if (sanitizedName.length < 3) {
+      throw new ValidationError('Resource name must be at least 3 characters');
+    }
+    if (sanitizedName.length > 200) {
+      throw new ValidationError('Resource name must be less than 200 characters');
+    }
+
+    // Validate and sanitize description
+    let sanitizedDescription = null;
+    if (description) {
+      sanitizedDescription = sanitizeString(description, 5000);
+      if (sanitizedDescription.length > 5000) {
+        throw new ValidationError('Resource description must be less than 5000 characters');
+      }
+    }
+
+    // Validate URL format if provided
+    if (url) {
+      try {
+        const urlObj = new URL(url);
+        // Only allow http and https protocols
+        if (!['http:', 'https:'].includes(urlObj.protocol)) {
+          throw new ValidationError('URL must use http or https protocol');
+        }
+        // Check URL length
+        if (url.length > 2048) {
+          throw new ValidationError('URL is too long (maximum 2048 characters)');
+        }
+      } catch (error: any) {
+        if (error instanceof ValidationError) {
+          throw error;
+        }
+        throw new ValidationError('Invalid URL format');
+      }
+    }
+
+    // Validate type
+    const validTypes = ['Sitemap Documents', 'Content Folders', 'Design Assets', 'Development Handoff Files', 'QA Checklists', 'Templates', 'Libraries'];
+    if (type && !validTypes.includes(type)) {
+      throw new ValidationError(`Invalid resource type. Must be one of: ${validTypes.join(', ')}`);
+    }
+
+    // Validate access level
+    const validAccessLevels = ['Team', 'Public', 'Restricted'];
+    if (accessLevel && !validAccessLevels.includes(accessLevel)) {
+      throw new ValidationError(`Invalid access level. Must be one of: ${validAccessLevels.join(', ')}`);
+    }
+
     const resource = await prisma.resource.create({
       data: {
-        name,
-        description: description || null,
-        type,
+        name: sanitizedName,
+        description: sanitizedDescription,
+        type: type || 'Templates',
         projectId: projectId || null,
         url: url || null,
         accessLevel: accessLevel || 'Team',
@@ -166,11 +222,72 @@ export const updateResource = async (req: AuthRequest, res: Response, next: Next
     const { name, description, type, url, accessLevel } = req.body;
     const updateData: any = {};
 
-    if (name !== undefined) updateData.name = name;
-    if (description !== undefined) updateData.description = description;
-    if (type !== undefined) updateData.type = type;
-    if (url !== undefined) updateData.url = url;
-    if (accessLevel !== undefined) updateData.accessLevel = accessLevel;
+    // Validate and sanitize name if provided
+    if (name !== undefined) {
+      if (!name || !name.trim()) {
+        throw new ValidationError('Resource name is required');
+      }
+      const sanitizedName = sanitizeString(name, 200);
+      if (sanitizedName.length < 3) {
+        throw new ValidationError('Resource name must be at least 3 characters');
+      }
+      if (sanitizedName.length > 200) {
+        throw new ValidationError('Resource name must be less than 200 characters');
+      }
+      updateData.name = sanitizedName;
+    }
+
+    // Validate and sanitize description if provided
+    if (description !== undefined) {
+      if (description) {
+        const sanitizedDescription = sanitizeString(description, 5000);
+        if (sanitizedDescription.length > 5000) {
+          throw new ValidationError('Resource description must be less than 5000 characters');
+        }
+        updateData.description = sanitizedDescription;
+      } else {
+        updateData.description = null;
+      }
+    }
+
+    // Validate URL format if provided
+    if (url !== undefined && url) {
+      try {
+        const urlObj = new URL(url);
+        if (!['http:', 'https:'].includes(urlObj.protocol)) {
+          throw new ValidationError('URL must use http or https protocol');
+        }
+        if (url.length > 2048) {
+          throw new ValidationError('URL is too long (maximum 2048 characters)');
+        }
+        updateData.url = url;
+      } catch (error: any) {
+        if (error instanceof ValidationError) {
+          throw error;
+        }
+        throw new ValidationError('Invalid URL format');
+      }
+    } else if (url !== undefined) {
+      updateData.url = null;
+    }
+
+    // Validate type if provided
+    if (type !== undefined) {
+      const validTypes = ['Sitemap Documents', 'Content Folders', 'Design Assets', 'Development Handoff Files', 'QA Checklists', 'Templates', 'Libraries'];
+      if (type && !validTypes.includes(type)) {
+        throw new ValidationError(`Invalid resource type. Must be one of: ${validTypes.join(', ')}`);
+      }
+      updateData.type = type;
+    }
+
+    // Validate access level if provided
+    if (accessLevel !== undefined) {
+      const validAccessLevels = ['Team', 'Public', 'Restricted'];
+      if (accessLevel && !validAccessLevels.includes(accessLevel)) {
+        throw new ValidationError(`Invalid access level. Must be one of: ${validAccessLevels.join(', ')}`);
+      }
+      updateData.accessLevel = accessLevel;
+    }
 
     const resource = await prisma.resource.update({
       where: { id },

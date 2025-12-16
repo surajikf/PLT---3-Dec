@@ -1,7 +1,7 @@
 import { Outlet, Link, useNavigate, useLocation } from 'react-router-dom';
 import { authService } from '../services/authService';
 import { UserRole, roleLabels } from '../utils/roles';
-import { LayoutDashboard, FolderKanban, Clock, BarChart3, LogOut, Link as LinkIcon, User, Menu, X, TrendingUp, Database, Settings } from 'lucide-react';
+import { LayoutDashboard, FolderKanban, Clock, BarChart3, LogOut, Link as LinkIcon, User, Menu, X, TrendingUp, Database, Settings, Mail } from 'lucide-react';
 import { useState } from 'react';
 import Avatar from './Avatar';
 
@@ -26,6 +26,7 @@ const Layout = () => {
     { path: '/reports', label: 'Reports', icon: BarChart3, roles: [UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.PROJECT_MANAGER] },
     { path: '/profit-loss', label: 'Profit & Loss', icon: TrendingUp, roles: [UserRole.SUPER_ADMIN, UserRole.ADMIN] },
     { path: '/master-management', label: 'Master Management', icon: Database, roles: [UserRole.SUPER_ADMIN, UserRole.ADMIN] },
+    { path: '/email-master', label: 'Email Master', icon: Mail, roles: [UserRole.SUPER_ADMIN, UserRole.ADMIN] },
   ];
 
   const filteredMenuItems = menuItems.filter((item) =>
@@ -148,7 +149,15 @@ const Layout = () => {
 
           {/* Mobile Menu */}
           {mobileMenuOpen && (
-            <div className="lg:hidden border-t border-gray-200/80 bg-white/95 backdrop-blur-sm py-2 -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8">
+            <div 
+              className="lg:hidden border-t border-gray-200/80 bg-white/95 backdrop-blur-sm py-2 -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8"
+              onClick={(e) => {
+                // Close menu when clicking outside
+                if (e.target === e.currentTarget) {
+                  setMobileMenuOpen(false);
+                }
+              }}
+            >
               <div className="space-y-0.5">
                 {filteredMenuItems.map((item) => {
                   const Icon = item.icon;

@@ -29,7 +29,8 @@ export async function createAuditLog(data: AuditLogData): Promise<void> {
     });
   } catch (error) {
     // Don't throw - audit logging should not break the main flow
-    console.error('Failed to create audit log:', error);
+    const { logger } = await import('./logger');
+    logger.error('Failed to create audit log:', error);
   }
 }
 

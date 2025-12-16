@@ -9,7 +9,7 @@ import { AuthRequest } from '../middleware/auth';
 export const getDashboardData = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const currentUser = req.user!;
-    const { includeUsers } = req.query;
+    const { includeUsers, projectLimit = '50', timesheetLimit = '500' } = req.query;
 
     // Build where clause for projects based on user role
     const projectWhere: any = {
@@ -91,6 +91,7 @@ export const getDashboardData = async (req: AuthRequest, res: Response, next: Ne
           },
         },
         orderBy: { createdAt: 'desc' },
+        take: Math.min(500, Math.max(10, parseInt(projectLimit as string) || 200)), // Increased limit for dashboard
       }),
 
       // Get timesheets
@@ -126,7 +127,7 @@ export const getDashboardData = async (req: AuthRequest, res: Response, next: Ne
           },
         },
         orderBy: { date: 'desc' },
-        take: 1000, // Limit to prevent huge responses
+        take: Math.min(5000, Math.max(100, parseInt(timesheetLimit as string) || 2000)), // Increased limit for dashboard
       }),
 
       // Get users (only if admin and requested)

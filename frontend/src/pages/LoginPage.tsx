@@ -148,7 +148,7 @@ const LoginPage = () => {
                 </p>
               )}
               <p className="mt-1 text-xs text-gray-500">
-                Minimum 6 characters required
+                Minimum 8 characters with uppercase, lowercase, number, and special character
               </p>
             </div>
           </div>
@@ -176,9 +176,23 @@ const LoginPage = () => {
             </button>
           </div>
           
-          <div className="text-center">
+          <div className="text-center space-y-2">
+            <button
+              type="button"
+              onClick={() => navigate('/forgot-password')}
+              className="text-sm text-primary-600 hover:text-primary-500 font-medium"
+            >
+              Forgot your password?
+            </button>
             <p className="text-xs text-gray-500">
-              Having trouble? Contact your administrator for assistance.
+              Don't have an account?{' '}
+              <button
+                type="button"
+                onClick={() => navigate('/register')}
+                className="text-primary-600 hover:text-primary-500 font-medium"
+              >
+                Register here
+              </button>
             </p>
           </div>
         </form>

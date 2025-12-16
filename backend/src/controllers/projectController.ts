@@ -164,12 +164,11 @@ export const getProjects = async (req: AuthRequest, res: Response, next: NextFun
       },
     });
   } catch (error: any) {
-    console.error('❌ Error in getProjects:', error);
-    console.error('Error message:', error.message);
-    console.error('Error stack:', error.stack);
-    if (error.code) {
-      console.error('Error code:', error.code);
-    }
+    const { logger } = await import('../utils/logger');
+    logger.error('Error in getProjects:', error);
+    if (error.message) logger.error('Error message:', error.message);
+    if (error.stack) logger.error('Error stack:', error.stack);
+    if (error.code) logger.error('Error code:', error.code);
     next(error);
   }
 };
@@ -450,6 +449,42 @@ export const createProject = async (req: AuthRequest, res: Response, next: NextF
       },
     });
 
+    // Send project created email (non-blocking)
+    try {
+      const { sendProjectCreatedEmail } = await import('../utils/emailNotifications');
+      const recipients = [];
+      
+      // Add manager to recipients
+      if (fullProject.manager) {
+        recipients.push({
+          email: fullProject.manager.email || '',
+          name: `${fullProject.manager.firstName} ${fullProject.manager.lastName}`,
+        });
+      }
+      
+      // Add creator to recipients if different from manager
+      if (fullProject.createdById !== fullProject.managerId) {
+        const creator = await prisma.user.findUnique({
+          where: { id: fullProject.createdById },
+          select: { email: true, firstName: true, lastName: true },
+        });
+        if (creator && !recipients.some(r => r.email === creator.email)) {
+          recipients.push({
+            email: creator.email,
+            name: `${creator.firstName} ${creator.lastName}`,
+          });
+        }
+      }
+      
+      if (recipients.length > 0) {
+        await sendProjectCreatedEmail(fullProject, recipients);
+      }
+    } catch (emailError) {
+      const { logger } = await import('../utils/logger');
+      logger.error('Failed to send project created email:', emailError);
+      // Don't fail project creation if email fails
+    }
+
     res.status(201).json({
       success: true,
       data: fullProject,
@@ -528,6 +563,7 @@ export const updateProject = async (req: AuthRequest, res: Response, next: NextF
       }
     });
 
+    const oldStatus = project.status;
     const updatedProject = await prisma.project.update({
       where: { id },
       data: updateData,
@@ -535,8 +571,62 @@ export const updateProject = async (req: AuthRequest, res: Response, next: NextF
         customer: true,
         manager: true,
         department: true,
+        members: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                email: true,
+                firstName: true,
+                lastName: true,
+              },
+            },
+          },
+        },
       },
     });
+
+    // Send project status changed email if status changed (non-blocking)
+    if (status && status !== oldStatus) {
+      try {
+        const { sendProjectStatusChangedEmail } = await import('../utils/emailNotifications');
+        const recipients = [];
+        
+        // Add manager
+        if (updatedProject.manager) {
+          recipients.push({
+            email: updatedProject.manager.email || '',
+            name: `${updatedProject.manager.firstName} ${updatedProject.manager.lastName}`,
+          });
+        }
+        
+        // Add all project members
+        updatedProject.members.forEach((member: any) => {
+          if (member.user && !recipients.some(r => r.email === member.user.email)) {
+            recipients.push({
+              email: member.user.email,
+              name: `${member.user.firstName} ${member.user.lastName}`,
+            });
+          }
+        });
+        
+        if (recipients.length > 0) {
+          await sendProjectStatusChangedEmail(
+            updatedProject,
+            oldStatus,
+            recipients,
+            {
+              firstName: currentUser.firstName,
+              lastName: currentUser.lastName,
+            }
+          );
+        }
+      } catch (emailError) {
+        const { logger } = await import('../utils/logger');
+        logger.error('Failed to send project status changed email:', emailError);
+        // Don't fail update if email fails
+      }
+    }
 
     res.json({
       success: true,
@@ -613,6 +703,42 @@ export const assignMembers = async (req: AuthRequest, res: Response, next: NextF
         },
       });
     });
+
+    // Send project assigned emails to newly assigned members (non-blocking)
+    try {
+      const { sendProjectAssignedEmail } = await import('../utils/emailNotifications');
+      const projectDetails = await prisma.project.findUnique({
+        where: { id },
+        include: {
+          manager: {
+            select: {
+              firstName: true,
+              lastName: true,
+            },
+          },
+        },
+      });
+      
+      if (projectDetails && userIds && Array.isArray(userIds) && userIds.length > 0) {
+        const users = await prisma.user.findMany({
+          where: { id: { in: userIds } },
+          select: {
+            id: true,
+            email: true,
+            firstName: true,
+            lastName: true,
+          },
+        });
+        
+        for (const user of users) {
+          await sendProjectAssignedEmail(projectDetails, user);
+        }
+      }
+    } catch (emailError) {
+      const { logger } = await import('../utils/logger');
+      logger.error('Failed to send project assigned emails:', emailError);
+      // Don't fail assignment if email fails
+    }
 
     res.json({
       success: true,

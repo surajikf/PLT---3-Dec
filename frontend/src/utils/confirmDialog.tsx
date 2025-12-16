@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { AlertTriangle, X } from 'lucide-react';
 
 interface ConfirmDialogProps {
@@ -22,6 +22,26 @@ export const ConfirmDialog = ({
   onCancel,
   variant = 'info',
 }: ConfirmDialogProps) => {
+  // Handle escape key to close dialog
+  useEffect(() => {
+    if (!isOpen) return;
+    
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onCancel();
+      }
+    };
+    
+    document.addEventListener('keydown', handleEscape);
+    // Prevent body scroll when dialog is open
+    document.body.style.overflow = 'hidden';
+    
+    return () => {
+      document.removeEventListener('keydown', handleEscape);
+      document.body.style.overflow = '';
+    };
+  }, [isOpen, onCancel]);
+  
   if (!isOpen) return null;
 
   const variantStyles = {
@@ -42,8 +62,19 @@ export const ConfirmDialog = ({
   const styles = variantStyles[variant];
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg max-w-md w-full shadow-xl">
+    <div 
+      className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+      onClick={(e) => {
+        // Close dialog when clicking backdrop
+        if (e.target === e.currentTarget) {
+          onCancel();
+        }
+      }}
+    >
+      <div 
+        className="bg-white rounded-lg max-w-md w-full shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="p-6">
           <div className="flex items-start">
             <div className={`flex-shrink-0 ${styles.icon}`}>
@@ -118,7 +149,10 @@ export const useConfirmDialog = () => {
 
   const handleCancel = () => {
     setIsOpen(false);
-    setConfig(null);
+    // Clear config after a short delay to ensure smooth transition
+    setTimeout(() => {
+      setConfig(null);
+    }, 200);
   };
 
   return {

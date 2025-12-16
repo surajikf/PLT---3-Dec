@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { body } from 'express-validator';
 import {
   getTimesheets,
+  getTodayWorkSummary,
   createTimesheet,
   updateTimesheet,
   approveTimesheet,
@@ -17,6 +18,7 @@ const router = Router();
 router.use(authenticate);
 
 router.get('/', getTimesheets);
+router.get('/today-summary', getTodayWorkSummary);
 router.post(
   '/',
   validate([

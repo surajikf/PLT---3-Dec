@@ -112,7 +112,8 @@ export async function checkDatabaseHealth(): Promise<boolean> {
     await prisma.$queryRaw`SELECT 1`;
     return true;
   } catch (error) {
-    console.error('Database health check failed:', error);
+    const { logger } = await import('./logger');
+    logger.error('Database health check failed:', error);
     return false;
   }
 }

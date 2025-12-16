@@ -121,6 +121,11 @@ export function validateEmail(email: string): void {
     throw new ValidationError('Email is required');
   }
   
+  // Check max length (RFC 5321)
+  if (email.length > 255) {
+    throw new ValidationError('Email address is too long (maximum 255 characters)');
+  }
+  
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   if (!emailRegex.test(email)) {
     throw new ValidationError('Invalid email format');

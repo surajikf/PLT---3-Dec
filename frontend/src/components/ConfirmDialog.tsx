@@ -1,4 +1,5 @@
 import { X, AlertTriangle, CheckCircle, Info, AlertCircle } from 'lucide-react';
+import { useEffect } from 'react';
 
 interface ConfirmDialogProps {
   isOpen: boolean;
@@ -21,6 +22,26 @@ const ConfirmDialog = ({
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) => {
+  // Handle escape key to close dialog
+  useEffect(() => {
+    if (!isOpen) return;
+    
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onCancel();
+      }
+    };
+    
+    document.addEventListener('keydown', handleEscape);
+    // Prevent body scroll when dialog is open
+    document.body.style.overflow = 'hidden';
+    
+    return () => {
+      document.removeEventListener('keydown', handleEscape);
+      document.body.style.overflow = '';
+    };
+  }, [isOpen, onCancel]);
+  
   if (!isOpen) return null;
 
   const iconMap = {
@@ -43,7 +64,10 @@ const ConfirmDialog = ({
         {/* Background overlay */}
         <div
           className="fixed inset-0 transition-opacity bg-gray-500 bg-opacity-75"
-          onClick={onCancel}
+          onClick={(e) => {
+            e.stopPropagation();
+            onCancel();
+          }}
           aria-hidden="true"
         ></div>
 

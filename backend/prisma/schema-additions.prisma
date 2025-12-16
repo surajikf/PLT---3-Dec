@@ -94,3 +94,4 @@ model ApprovalRequest {
 // approvalsGiven ApprovalRequest[] @relation("ApprovalApprover")
 // resourceCapacity ResourceCapacity?
 
+

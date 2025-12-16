@@ -683,6 +683,19 @@ export const createUser = async (req: AuthRequest, res: Response, next: NextFunc
       userAgent: getUserAgent(req),
     });
 
+    // Send welcome email (non-blocking)
+    // Note: Email failure is logged but doesn't block user creation
+    // User will receive credentials in response
+    try {
+      const { sendWelcomeEmail } = await import('../utils/emailNotifications');
+      await sendWelcomeEmail(user, password); // Send with temporary password
+    } catch (emailError) {
+      // Log error for admin review but don't fail user creation
+      // Email is supplementary - user can still login with provided credentials
+      const { logger } = await import('../utils/logger');
+      logger.error('Failed to send welcome email:', emailError);
+    }
+
     res.status(201).json({
       success: true,
       data: user,
@@ -721,9 +734,15 @@ export const changePassword = async (req: AuthRequest, res: Response, next: Next
       throw new ValidationError('Current password is incorrect');
     }
 
-    // Validate new password is provided (no strength requirements)
+    // Validate new password strength
     if (!newPassword || newPassword.trim().length === 0) {
       throw new ValidationError('New password is required');
+    }
+    
+    const { validatePasswordStrength } = await import('../utils/passwordValidation');
+    const passwordValidation = validatePasswordStrength(newPassword);
+    if (!passwordValidation.isValid) {
+      throw new ValidationError(passwordValidation.errors.join('. '));
     }
 
     // Check if new password is same as current

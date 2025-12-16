@@ -42,10 +42,43 @@ const RegisterPage = () => {
       return false;
     }
 
-    // No password strength requirements - user can set any password
-    setErrors(prev => ({ ...prev, password: undefined }));
-    setPasswordStrength('medium'); // Set default strength for UI
-    return true;
+    // Check password strength requirements
+    const errors: string[] = [];
+    let strength: 'weak' | 'medium' | 'strong' = 'weak';
+
+    if (password.length < 8) {
+      errors.push('Password must be at least 8 characters long');
+    }
+    if (password.length > 128) {
+      errors.push('Password must be less than 128 characters');
+    }
+    if (!/[A-Z]/.test(password)) {
+      errors.push('Password must contain at least one uppercase letter');
+    }
+    if (!/[a-z]/.test(password)) {
+      errors.push('Password must contain at least one lowercase letter');
+    }
+    if (!/[0-9]/.test(password)) {
+      errors.push('Password must contain at least one number');
+    }
+    if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password)) {
+      errors.push('Password must contain at least one special character');
+    }
+
+    if (errors.length === 0) {
+      if (password.length >= 12 && /[A-Z]/.test(password) && /[a-z]/.test(password) && /[0-9]/.test(password) && /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password)) {
+        strength = 'strong';
+      } else {
+        strength = 'medium';
+      }
+      setErrors(prev => ({ ...prev, password: undefined }));
+      setPasswordStrength(strength);
+      return true;
+    } else {
+      setErrors(prev => ({ ...prev, password: errors.join('. ') }));
+      setPasswordStrength('weak');
+      return false;
+    }
   };
 
   const validateName = (name: string, field: 'firstName' | 'lastName'): boolean => {
@@ -237,22 +270,27 @@ const RegisterPage = () => {
                   {errors.password}
                 </p>
               )}
-              {formData.password && !errors.password && passwordStrength && (
+              {formData.password && (
                 <div className="mt-2">
-                  <div className="flex items-center gap-2 mb-1">
-                    <div className={`flex-1 h-2 rounded-full ${
-                      passwordStrength === 'strong' ? 'bg-green-500' :
-                      passwordStrength === 'medium' ? 'bg-yellow-500' :
-                      'bg-red-500'
-                    }`} />
-                    <span className={`text-xs font-medium ${
-                      passwordStrength === 'strong' ? 'text-green-600' :
-                      passwordStrength === 'medium' ? 'text-yellow-600' :
-                      'text-red-600'
-                    }`}>
-                      {passwordStrength === 'strong' ? 'Strong' : passwordStrength === 'medium' ? 'Medium' : 'Weak'}
-                    </span>
-                  </div>
+                  {errors.password ? null : passwordStrength && (
+                    <div className="flex items-center gap-2 mb-1">
+                      <div className={`flex-1 h-2 rounded-full ${
+                        passwordStrength === 'strong' ? 'bg-green-500' :
+                        passwordStrength === 'medium' ? 'bg-yellow-500' :
+                        'bg-red-500'
+                      }`} />
+                      <span className={`text-xs font-medium ${
+                        passwordStrength === 'strong' ? 'text-green-600' :
+                        passwordStrength === 'medium' ? 'text-yellow-600' :
+                        'text-red-600'
+                      }`}>
+                        {passwordStrength === 'strong' ? 'Strong' : passwordStrength === 'medium' ? 'Medium' : 'Weak'}
+                      </span>
+                    </div>
+                  )}
+                  <p className="text-xs text-gray-500 mt-1">
+                    Password must be 8+ characters with uppercase, lowercase, number, and special character
+                  </p>
                 </div>
               )}
             </div>

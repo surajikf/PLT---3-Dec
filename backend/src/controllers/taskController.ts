@@ -207,6 +207,7 @@ export const createTask = async (req: AuthRequest, res: Response, next: NextFunc
         priority: priority || 'MEDIUM',
         dueDate: dueDate ? new Date(dueDate) : null,
         stageId: stageId || null,
+        estimatedHours: req.body.estimatedHours || null,
         createdById: currentUser.userId,
       },
       include: {
@@ -222,6 +223,7 @@ export const createTask = async (req: AuthRequest, res: Response, next: NextFunc
             id: true,
             firstName: true,
             lastName: true,
+            email: true,
           },
         },
         stage: {
@@ -232,6 +234,18 @@ export const createTask = async (req: AuthRequest, res: Response, next: NextFunc
         },
       },
     });
+
+    // Send task assigned email if task is assigned (non-blocking)
+    if (task.assignedToId && task.assignedTo) {
+      try {
+        const { sendTaskAssignedEmail } = await import('../utils/emailNotifications');
+        await sendTaskAssignedEmail(task, task.assignedTo);
+      } catch (emailError) {
+        const { logger } = await import('../utils/logger');
+        logger.error('Failed to send task assigned email:', emailError);
+        // Don't fail task creation if email fails
+      }
+    }
 
     res.status(201).json({
       success: true,
@@ -322,6 +336,9 @@ export const updateTask = async (req: AuthRequest, res: Response, next: NextFunc
     if (assignedToId !== undefined) finalUpdateData.assignedToId = assignedToId || null;
     if (stageId !== undefined) finalUpdateData.stageId = stageId || null;
 
+    const oldAssignedToId = task.assignedToId;
+    const oldStatus = task.status;
+    
     const updated = await prisma.task.update({
       where: { id },
       data: finalUpdateData,
@@ -338,6 +355,7 @@ export const updateTask = async (req: AuthRequest, res: Response, next: NextFunc
             id: true,
             firstName: true,
             lastName: true,
+            email: true,
           },
         },
         stage: {
@@ -348,6 +366,63 @@ export const updateTask = async (req: AuthRequest, res: Response, next: NextFunc
         },
       },
     });
+
+    // Send task assigned email if assignment changed (non-blocking)
+    if (assignedToId !== undefined && assignedToId !== oldAssignedToId && updated.assignedTo) {
+      try {
+        const { sendTaskAssignedEmail } = await import('../utils/emailNotifications');
+        await sendTaskAssignedEmail(updated, updated.assignedTo);
+      } catch (emailError) {
+        console.error('Failed to send task assigned email:', emailError);
+        // Don't fail update if email fails
+      }
+    }
+
+    // Send task status updated email if status changed (non-blocking)
+    if (status && status !== oldStatus) {
+      try {
+        const { sendEmailNotification, EmailActivityType } = await import('../utils/emailNotifications');
+        const recipients = [];
+        
+        // Add assigned user
+        if (updated.assignedTo) {
+          recipients.push({
+            email: updated.assignedTo.email,
+            name: `${updated.assignedTo.firstName} ${updated.assignedTo.lastName}`,
+          });
+        }
+        
+        // Add creator if different
+        const creator = await prisma.user.findUnique({
+          where: { id: task.createdById },
+          select: { email: true, firstName: true, lastName: true },
+        });
+        if (creator && !recipients.some(r => r.email === creator.email)) {
+          recipients.push({
+            email: creator.email,
+            name: `${creator.firstName} ${creator.lastName}`,
+          });
+        }
+        
+        if (recipients.length > 0) {
+          await sendEmailNotification({
+            activityType: EmailActivityType.TASK_STATUS_UPDATED,
+            recipients,
+            variables: {
+              taskTitle: updated.title,
+              oldStatus,
+              newStatus: updated.status,
+              projectName: updated.project.name,
+              updatedBy: `${currentUser.firstName} ${currentUser.lastName}`,
+            },
+          });
+        }
+      } catch (emailError) {
+        const { logger } = await import('../utils/logger');
+        logger.error('Failed to send task status updated email:', emailError);
+        // Don't fail update if email fails
+      }
+    }
 
     res.json({
       success: true,

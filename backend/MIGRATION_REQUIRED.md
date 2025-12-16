@@ -28,3 +28,4 @@ The schema has been updated with new features. You need to run migrations.
 
 If you get file lock errors, make sure the server is completely stopped before running migrations.
 
+

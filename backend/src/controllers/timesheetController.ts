@@ -147,14 +147,24 @@ export const createTimesheet = async (req: AuthRequest, res: Response, next: Nex
 
     // Log warnings if any (but don't block)
     if (memberValidation.warnings.length > 0) {
-      console.warn('Timesheet validation warnings:', memberValidation.warnings);
+      const { logger } = await import('../utils/logger');
+      logger.warn('Timesheet validation warnings:', memberValidation.warnings);
+    }
+
+    // Sanitize description
+    const { sanitizeString } = await import('../utils/sanitize');
+    const sanitizedDescription = description ? sanitizeString(description, 5000) : '';
+    
+    // Validate description length
+    if (sanitizedDescription.length > 5000) {
+      throw new ValidationError('Description must be less than 5000 characters');
     }
 
     // Enhanced validation using workflow utility
     const timesheetData = {
       date: entryDate,
       hours: validatedHours,
-      description: description || '',
+      description: sanitizedDescription,
       projectId,
     };
     
@@ -238,10 +248,30 @@ export const createTimesheet = async (req: AuthRequest, res: Response, next: Nex
             id: true,
             code: true,
             name: true,
+            manager: {
+              select: {
+                id: true,
+                email: true,
+                firstName: true,
+                lastName: true,
+              },
+            },
           },
         },
       },
     });
+
+    // Send timesheet submitted email if status is SUBMITTED (non-blocking)
+    if (timesheetStatus === 'SUBMITTED' && timesheet.project.manager) {
+      try {
+        const { sendTimesheetSubmittedEmail } = await import('../utils/emailNotifications');
+        await sendTimesheetSubmittedEmail(timesheet, timesheet.project.manager);
+      } catch (emailError) {
+        const { logger } = await import('../utils/logger');
+        logger.error('Failed to send timesheet submitted email:', emailError);
+        // Don't fail timesheet creation if email fails
+      }
+    }
 
     res.status(201).json({
       success: true,
@@ -282,6 +312,7 @@ export const updateTimesheet = async (req: AuthRequest, res: Response, next: Nex
       }
     }
 
+    const oldStatus = timesheet.status;
     const updateData: any = {};
     if (date) {
       const entryDate = new Date(date);
@@ -339,6 +370,14 @@ export const updateTimesheet = async (req: AuthRequest, res: Response, next: Nex
             id: true,
             code: true,
             name: true,
+            manager: {
+              select: {
+                id: true,
+                email: true,
+                firstName: true,
+                lastName: true,
+              },
+            },
           },
         },
         task: {
@@ -349,6 +388,17 @@ export const updateTimesheet = async (req: AuthRequest, res: Response, next: Nex
         },
       },
     });
+
+    // Send timesheet submitted email if status changed from DRAFT to SUBMITTED (non-blocking)
+    if (status === 'SUBMITTED' && oldStatus !== 'SUBMITTED' && updated.project.manager) {
+      try {
+        const { sendTimesheetSubmittedEmail } = await import('../utils/emailNotifications');
+        await sendTimesheetSubmittedEmail(updated, updated.project.manager);
+      } catch (emailError) {
+        console.error('Failed to send timesheet submitted email:', emailError);
+        // Don't fail update if email fails
+      }
+    }
 
     // Update task actual hours if task is linked or changed
     if (updateData.taskId !== undefined) {
@@ -421,6 +471,7 @@ export const approveTimesheet = async (req: AuthRequest, res: Response, next: Ne
             id: true,
             firstName: true,
             lastName: true,
+            email: true,
             hourlyRate: true,
           },
         },
@@ -431,6 +482,12 @@ export const approveTimesheet = async (req: AuthRequest, res: Response, next: Ne
             name: true,
           },
         },
+        approvedBy: {
+          select: {
+            firstName: true,
+            lastName: true,
+          },
+        },
       },
     });
 
@@ -438,6 +495,16 @@ export const approveTimesheet = async (req: AuthRequest, res: Response, next: Ne
     if (updated.taskId) {
       const { updateTaskActualHours } = await import('../utils/taskDependencies');
       await updateTaskActualHours(updated.taskId);
+    }
+
+    // Send timesheet approved email (non-blocking)
+    try {
+      const { sendTimesheetApprovedEmail } = await import('../utils/emailNotifications');
+      await sendTimesheetApprovedEmail(updated);
+    } catch (emailError) {
+      const { logger } = await import('../utils/logger');
+      logger.error('Failed to send timesheet approved email:', emailError);
+      // Don't fail approval if email fails
     }
 
     res.json({
@@ -482,6 +549,7 @@ export const rejectTimesheet = async (req: AuthRequest, res: Response, next: Nex
       data: {
         status: 'REJECTED',
         rejectedReason: reason || null,
+        approvedById: currentUser.userId,
       },
       include: {
         user: {
@@ -489,6 +557,7 @@ export const rejectTimesheet = async (req: AuthRequest, res: Response, next: Nex
             id: true,
             firstName: true,
             lastName: true,
+            email: true,
             hourlyRate: true,
           },
         },
@@ -505,6 +574,12 @@ export const rejectTimesheet = async (req: AuthRequest, res: Response, next: Nex
             title: true,
           },
         },
+        approvedBy: {
+          select: {
+            firstName: true,
+            lastName: true,
+          },
+        },
       },
     });
 
@@ -512,6 +587,16 @@ export const rejectTimesheet = async (req: AuthRequest, res: Response, next: Nex
     if (updated.taskId) {
       const { updateTaskActualHours } = await import('../utils/taskDependencies');
       await updateTaskActualHours(updated.taskId);
+    }
+
+    // Send timesheet rejected email (non-blocking)
+    try {
+      const { sendTimesheetRejectedEmail } = await import('../utils/emailNotifications');
+      await sendTimesheetRejectedEmail(updated);
+    } catch (emailError) {
+      const { logger } = await import('../utils/logger');
+      logger.error('Failed to send timesheet rejected email:', emailError);
+      // Don't fail rejection if email fails
     }
 
     res.json({

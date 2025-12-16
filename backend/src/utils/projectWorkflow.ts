@@ -256,6 +256,15 @@ export function validateProjectData(data: any, isUpdate: boolean = false): {
       errors.push('Project name is required');
     } else if (data.name.trim().length < 3) {
       errors.push('Project name must be at least 3 characters');
+    } else if (data.name.trim().length > 200) {
+      errors.push('Project name must be less than 200 characters');
+    }
+  }
+  
+  // Validate description max length
+  if (data.description !== undefined && data.description !== null) {
+    if (typeof data.description === 'string' && data.description.length > 5000) {
+      errors.push('Project description must be less than 5000 characters');
     }
   }
 

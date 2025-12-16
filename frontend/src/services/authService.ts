@@ -78,6 +78,28 @@ export const authService = {
     return response.data.data;
   },
 
+  async requestPasswordReset(email: string) {
+    try {
+      const response = await api.post('/auth/forgot-password', { email });
+      toast.success(response.data.message || 'If an account with that email exists, a password reset link has been sent.');
+      return response.data;
+    } catch (error: any) {
+      toast.error(error.response?.data?.error || 'Failed to request password reset');
+      throw error;
+    }
+  },
+
+  async resetPassword(token: string, password: string) {
+    try {
+      const response = await api.post('/auth/reset-password', { token, password });
+      toast.success(response.data.message || 'Password has been reset successfully');
+      return response.data;
+    } catch (error: any) {
+      toast.error(error.response?.data?.error || 'Failed to reset password');
+      throw error;
+    }
+  },
+
   logout() {
     localStorage.removeItem('token');
     localStorage.removeItem('user');

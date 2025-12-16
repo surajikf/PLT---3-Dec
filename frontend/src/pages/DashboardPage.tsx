@@ -70,31 +70,51 @@ const DashboardPage = () => {
   // Fetch all dashboard data in a single request to reduce API calls
   const canViewUsers = user && ['SUPER_ADMIN', 'ADMIN'].includes(user.role);
   
+  // Create user-specific query key to prevent cache collisions
+  // Use stable key that doesn't change unless user changes
+  // Memoize the query key to prevent unnecessary re-renders
+  const queryKey = useMemo(() => [
+    'dashboard-data', 
+    user?.id || 'anonymous', 
+    user?.role || 'none', 
+    canViewUsers ? 'true' : 'false' // Convert boolean to string for stability
+  ], [user?.id, user?.role, canViewUsers]);
+  
   const { 
     data: rawDashboardData, 
     isLoading: dashboardLoading, 
     isError: dashboardError,
-    refetch: refetchDashboard 
-  } = useQuery('dashboard-data', async () => {
-    const res = await api.get(`/analytics/dashboard?includeUsers=${canViewUsers ? 'true' : 'false'}`);
+    refetch: refetchDashboard,
+    isFetching: isFetchingDashboard
+  } = useQuery(queryKey, async () => {
+    const res = await api.get(`/analytics/dashboard?includeUsers=${canViewUsers ? 'true' : 'false'}&projectLimit=200&timesheetLimit=2000`);
     return res.data.data;
   }, {
     onError: (error: any) => {
       const errorMessage = error.userMessage || error.response?.data?.error || 'Failed to load dashboard data';
       toast.error(errorMessage);
     },
-    retry: 1, // Reduced retries to prevent too many requests
+    retry: 2, // Retry on failure
+    retryDelay: 1000,
     refetchOnWindowFocus: false,
-    staleTime: 30 * 1000, // Cache for 30 seconds
+    refetchOnMount: false, // Don't refetch on mount if data exists (override global default)
+    refetchOnReconnect: false, // Don't refetch on reconnect
+    staleTime: 5 * 60 * 1000, // Cache for 5 minutes (increased from 30 seconds) - override dev default
+    cacheTime: 10 * 60 * 1000, // Keep data in cache for 10 minutes (prevents garbage collection) - override dev default
+    keepPreviousData: true, // Keep previous data while fetching new data (prevents data loss)
   });
 
-  // Extract data from batch response
-  const allProjects = rawDashboardData?.projects || [];
-  const allTimesheets = rawDashboardData?.timesheets || [];
-  const allUsers = rawDashboardData?.users || [];
+  // Extract data from batch response - use nullish coalescing to prevent undefined errors
+  // This ensures data is always available even if the query hasn't completed yet
+  const allProjects = rawDashboardData?.projects ?? [];
+  const allTimesheets = rawDashboardData?.timesheets ?? [];
+  const allUsers = rawDashboardData?.users ?? [];
 
-  const isLoading = dashboardLoading;
-  const hasError = dashboardError;
+  // Only show loading/error states if we don't have cached data
+  // This prevents data loss when refetching
+  // Also check if we're actually fetching (not just initial load)
+  const isLoading = dashboardLoading && !rawDashboardData && !isFetchingDashboard;
+  const hasError = dashboardError && !rawDashboardData;
   
   // Refetch functions for compatibility
   const refetchProjects = refetchDashboard;

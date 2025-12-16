@@ -628,9 +628,13 @@ const ProjectDetailPage = () => {
                   <TrendingUp className="w-5 h-5 text-purple-600" />
                 </div>
                 <p className="text-sm text-gray-600 mb-1">Health Score</p>
-                <p className="text-2xl font-bold text-gray-900">{project.healthScore || 'N/A'}</p>
+                <p className="text-2xl font-bold text-gray-900">
+                  {project.healthScore !== null && project.healthScore !== undefined ? `${project.healthScore.toFixed(1)}%` : 'N/A'}
+                </p>
                 <p className="text-xs text-gray-500 mt-1">
-                  {project.healthScore && project.healthScore >= 70 ? 'Good' : project.healthScore && project.healthScore >= 50 ? 'Fair' : 'Needs attention'}
+                  {project.healthScore !== null && project.healthScore !== undefined 
+                    ? (project.healthScore >= 70 ? 'Good' : project.healthScore >= 50 ? 'Fair' : 'Needs attention')
+                    : 'Not calculated'}
                 </p>
               </div>
             </>

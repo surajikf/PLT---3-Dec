@@ -148,6 +148,11 @@ export function validateTimesheetData(data: any): {
     errors.push('Project is required');
   }
 
+  // Validate description length
+  if (data.description && typeof data.description === 'string' && data.description.length > 5000) {
+    errors.push('Description must be less than 5000 characters');
+  }
+
   // Validate description
   if (!data.description || data.description.trim().length === 0) {
     errors.push('Description is required');

@@ -38,6 +38,7 @@ import resourceCapacityRoutes from './routes/resourceCapacityRoutes';
 import analyticsRoutes from './routes/analyticsRoutes';
 import scheduledJobsRoutes from './routes/scheduledJobsRoutes';
 import approvalChainRoutes from './routes/approvalChainRoutes';
+import emailTemplateRoutes from './routes/emailTemplateRoutes';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -108,6 +109,7 @@ app.use('/api/capacity', readLimiter, resourceCapacityRoutes);
 app.use('/api/analytics', readLimiter, analyticsRoutes);
 app.use('/api/jobs', writeLimiter, scheduledJobsRoutes);
 app.use('/api/approval-chains', writeLimiter, approvalChainRoutes);
+app.use('/api/email-templates', writeLimiter, emailTemplateRoutes);
 
 // Error handler (must be last)
 app.use(errorHandler);
